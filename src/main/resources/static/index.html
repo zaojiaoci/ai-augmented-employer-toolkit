@@ -1,0 +1,552 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI 增强型雇主 - 岗位自动化分析</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Noto Sans SC", sans-serif;
+            background: #f5f7fa;
+            color: #1a1a2e;
+            line-height: 1.6;
+            min-height: 100vh;
+        }
+
+        .container {
+            max-width: 720px;
+            margin: 0 auto;
+            padding: 40px 24px 60px;
+        }
+
+        header {
+            text-align: center;
+            margin-bottom: 32px;
+        }
+
+        header h1 {
+            font-size: 28px;
+            font-weight: 700;
+            color: #1a1a2e;
+            margin-bottom: 8px;
+        }
+
+        header p {
+            font-size: 15px;
+            color: #6b7280;
+        }
+
+        /* Gree case study banner */
+        .case-study {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            border-radius: 12px;
+            padding: 24px 28px;
+            margin-bottom: 28px;
+            color: #fff;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .case-study::before {
+            content: '';
+            position: absolute;
+            top: -30px;
+            right: -30px;
+            width: 120px;
+            height: 120px;
+            border-radius: 50%;
+            background: rgba(255, 255, 255, 0.08);
+        }
+
+        .case-study-label {
+            font-size: 12px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            opacity: 0.8;
+            margin-bottom: 8px;
+        }
+
+        .case-study-title {
+            font-size: 17px;
+            font-weight: 700;
+            margin-bottom: 10px;
+            line-height: 1.4;
+        }
+
+        .case-study-body {
+            font-size: 14px;
+            line-height: 1.7;
+            opacity: 0.92;
+        }
+
+        .case-study-stats {
+            display: flex;
+            gap: 20px;
+            margin-top: 16px;
+            flex-wrap: wrap;
+        }
+
+        .stat-item {
+            text-align: center;
+        }
+
+        .stat-value {
+            font-size: 24px;
+            font-weight: 800;
+            display: block;
+        }
+
+        .stat-label {
+            font-size: 12px;
+            opacity: 0.8;
+        }
+
+        .card {
+            background: #fff;
+            border-radius: 12px;
+            padding: 32px;
+            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06), 0 1px 2px rgba(0, 0, 0, 0.04);
+            margin-bottom: 24px;
+        }
+
+        label {
+            display: block;
+            font-size: 14px;
+            font-weight: 600;
+            color: #374151;
+            margin-bottom: 8px;
+        }
+
+        textarea {
+            width: 100%;
+            min-height: 140px;
+            padding: 14px 16px;
+            border: 1.5px solid #d1d5db;
+            border-radius: 8px;
+            font-size: 15px;
+            font-family: inherit;
+            line-height: 1.6;
+            resize: vertical;
+            transition: border-color 0.2s;
+            color: #1a1a2e;
+            background: #fafbfc;
+        }
+
+        textarea:focus {
+            outline: none;
+            border-color: #6366f1;
+            background: #fff;
+        }
+
+        textarea::placeholder { color: #9ca3af; }
+
+        .btn {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+            width: 100%;
+            margin-top: 16px;
+            padding: 14px 24px;
+            border: none;
+            border-radius: 8px;
+            font-size: 15px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s;
+            background: #6366f1;
+            color: #fff;
+        }
+
+        .btn:hover:not(:disabled) {
+            background: #4f46e5;
+            transform: translateY(-1px);
+            box-shadow: 0 4px 12px rgba(99, 102, 241, 0.3);
+        }
+
+        .btn:disabled { opacity: 0.6; cursor: not-allowed; transform: none; }
+
+        .spinner {
+            width: 18px; height: 18px;
+            border: 2.5px solid rgba(255, 255, 255, 0.3);
+            border-top-color: #fff;
+            border-radius: 50%;
+            animation: spin 0.7s linear infinite;
+            display: none;
+        }
+
+        .btn.loading .spinner { display: block; }
+        .btn.loading .btn-text { display: none; }
+
+        @keyframes spin { to { transform: rotate(360deg); } }
+
+        /* Result area */
+        .result { display: none; animation: fadeIn 0.4s ease; }
+        .result.visible { display: block; }
+
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(12px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        .result-header { text-align: center; margin-bottom: 24px; }
+
+        .gauge-wrapper { display: flex; justify-content: center; margin-bottom: 8px; }
+
+        .gauge {
+            position: relative;
+            width: 160px; height: 160px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .gauge-inner {
+            position: absolute;
+            width: 120px; height: 120px;
+            border-radius: 50%;
+            background: #fff;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .gauge-value { font-size: 36px; font-weight: 700; line-height: 1; }
+        .gauge-label { font-size: 12px; color: #6b7280; margin-top: 4px; }
+
+        .risk-tag {
+            display: inline-block;
+            padding: 4px 14px;
+            border-radius: 20px;
+            font-size: 13px;
+            font-weight: 600;
+        }
+
+        .risk-low { background: #ecfdf5; color: #059669; }
+        .risk-medium { background: #fffbeb; color: #d97706; }
+        .risk-high { background: #fef2f2; color: #dc2626; }
+
+        .summary-text { font-size: 15px; line-height: 1.8; color: #374151; }
+
+        .summary-label {
+            font-size: 13px;
+            font-weight: 600;
+            color: #6b7280;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin-bottom: 12px;
+        }
+
+        /* Transition path card */
+        .transition-card {
+            background: linear-gradient(135deg, #f0fdf4 0%, #ecfdf5 100%);
+            border: 1px solid #bbf7d0;
+            border-radius: 12px;
+            padding: 28px;
+            margin-bottom: 24px;
+        }
+
+        .transition-title {
+            font-size: 16px;
+            font-weight: 700;
+            color: #166534;
+            margin-bottom: 16px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .transition-title::before {
+            content: '→';
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 28px;
+            height: 28px;
+            background: #166534;
+            color: #fff;
+            border-radius: 50%;
+            font-size: 14px;
+            flex-shrink: 0;
+        }
+
+        .transition-role {
+            font-size: 20px;
+            font-weight: 700;
+            color: #166534;
+            margin-bottom: 16px;
+            padding: 12px 16px;
+            background: rgba(255, 255, 255, 0.7);
+            border-radius: 8px;
+        }
+
+        .transition-section {
+            margin-bottom: 16px;
+        }
+
+        .transition-section:last-child {
+            margin-bottom: 0;
+        }
+
+        .transition-section-title {
+            font-size: 13px;
+            font-weight: 600;
+            color: #15803d;
+            margin-bottom: 8px;
+        }
+
+        .skill-tags {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+        }
+
+        .skill-tag {
+            display: inline-block;
+            padding: 5px 14px;
+            background: #fff;
+            border: 1px solid #86efac;
+            border-radius: 20px;
+            font-size: 13px;
+            color: #166534;
+            font-weight: 500;
+        }
+
+        .transition-text {
+            font-size: 14px;
+            line-height: 1.7;
+            color: #374151;
+        }
+
+        .encouragement {
+            font-size: 15px;
+            font-style: italic;
+            color: #166534;
+            padding: 12px 16px;
+            background: rgba(255, 255, 255, 0.7);
+            border-radius: 8px;
+            border-left: 3px solid #16a34a;
+            line-height: 1.7;
+        }
+
+        /* Error */
+        .error {
+            display: none;
+            text-align: center;
+            padding: 16px;
+            background: #fef2f2;
+            border-radius: 8px;
+            color: #dc2626;
+            font-size: 14px;
+            margin-top: 16px;
+        }
+
+        .error.visible { display: block; animation: fadeIn 0.3s ease; }
+
+        footer {
+            text-align: center;
+            margin-top: 48px;
+            font-size: 13px;
+            color: #9ca3af;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>AI 增强型雇主</h1>
+            <p>分析岗位被 AI 替代的可能性，找到人机协作的路径</p>
+        </header>
+
+        <!-- Gree case study -->
+        <div class="case-study">
+            <div class="case-study-label">真实案例</div>
+            <div class="case-study-title">格力：不裁一人，转岗成功率 100%</div>
+            <div class="case-study-body">
+                格力在引入自动化时，找出老职工原有技能和新岗位的"最大公约数"，让转岗者觉得"我不是从头再来，是在老经验上添新本事"。
+            </div>
+            <div class="case-study-stats">
+                <div class="stat-item">
+                    <span class="stat-value">100%</span>
+                    <span class="stat-label">转岗成功率</span>
+                </div>
+                <div class="stat-item">
+                    <span class="stat-value">+8%</span>
+                    <span class="stat-label">收入平均增长</span>
+                </div>
+                <div class="stat-item">
+                    <span class="stat-value">0</span>
+                    <span class="stat-label">因技术掉队人数</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- Input card -->
+        <div class="card">
+            <label for="jobInput">输入岗位描述</label>
+            <textarea id="jobInput" placeholder="粘贴或输入一段岗位描述，例如：&#10;&#10;负责每日订单录入、发票开具、客户电话回访，以及月末销售数据汇总报表制作。要求熟练使用 Excel 和 ERP 系统。"></textarea>
+            <button class="btn" id="analyzeBtn" onclick="analyze()">
+                <span class="spinner"></span>
+                <span class="btn-text">开始分析</span>
+            </button>
+        </div>
+
+        <!-- Error -->
+        <div class="error" id="errorBox"></div>
+
+        <!-- Result -->
+        <div class="result" id="resultArea">
+            <!-- Gauge card -->
+            <div class="card">
+                <div class="result-header">
+                    <div class="gauge-wrapper">
+                        <div class="gauge" id="gauge">
+                            <div class="gauge-inner">
+                                <span class="gauge-value" id="gaugeValue">--</span>
+                                <span class="gauge-label">自动化率</span>
+                            </div>
+                        </div>
+                    </div>
+                    <span class="risk-tag" id="riskTag">评估中</span>
+                </div>
+            </div>
+
+            <!-- Summary card -->
+            <div class="card">
+                <div class="summary-label">分析摘要</div>
+                <div class="summary-text" id="summaryText"></div>
+            </div>
+
+            <!-- Transition path card -->
+            <div class="transition-card" id="transitionCard">
+                <div class="transition-title">转岗路径建议</div>
+                <div class="transition-role" id="suggestedRole"></div>
+
+                <div class="transition-section">
+                    <div class="transition-section-title">可迁移的核心技能</div>
+                    <div class="skill-tags" id="skillTags"></div>
+                </div>
+
+                <div class="transition-section">
+                    <div class="transition-section-title">需要补充的能力</div>
+                    <div class="transition-text" id="skillGap"></div>
+                </div>
+
+                <div class="transition-section">
+                    <div class="encouragement" id="encouragement"></div>
+                </div>
+            </div>
+        </div>
+
+        <footer>
+            AI-Augmented Employer Toolkit &middot; 让 AI 增强而非替代
+        </footer>
+    </div>
+
+    <script>
+        async function analyze() {
+            const input = document.getElementById('jobInput').value.trim();
+            const btn = document.getElementById('analyzeBtn');
+            const errorBox = document.getElementById('errorBox');
+            const resultArea = document.getElementById('resultArea');
+
+            errorBox.classList.remove('visible');
+            resultArea.classList.remove('visible');
+
+            if (!input) {
+                showError('请先输入一段岗位描述');
+                return;
+            }
+
+            btn.classList.add('loading');
+            btn.disabled = true;
+
+            try {
+                const res = await fetch('/api/analyze', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ jobDescription: input })
+                });
+
+                if (!res.ok) throw new Error('服务器返回 ' + res.status + '，请稍后重试');
+
+                const data = await res.json();
+                showResult(data);
+            } catch (err) {
+                showError(err.message || '网络请求失败，请检查服务是否已启动');
+            } finally {
+                btn.classList.remove('loading');
+                btn.disabled = false;
+            }
+        }
+
+        function showResult(data) {
+            const ratio = data.automationRatio;
+            const pct = Math.round(ratio * 100);
+            const gaugeValue = document.getElementById('gaugeValue');
+            const gauge = document.getElementById('gauge');
+            const riskTag = document.getElementById('riskTag');
+            const resultArea = document.getElementById('resultArea');
+
+            // Gauge
+            gaugeValue.textContent = pct + '%';
+
+            let color, riskClass, riskLabel;
+            if (ratio <= 0.35) {
+                color = '#059669'; riskClass = 'risk-low'; riskLabel = '低风险 - AI 更适合辅助';
+            } else if (ratio <= 0.65) {
+                color = '#d97706'; riskClass = 'risk-medium'; riskLabel = '中等 - 人机协作空间大';
+            } else {
+                color = '#dc2626'; riskClass = 'risk-high'; riskLabel = '高风险 - 建议尽早规划转岗';
+            }
+
+            const deg = ratio * 360;
+            gauge.style.background = 'conic-gradient(' + color + ' 0deg, ' + color + ' ' + deg + 'deg, #e5e7eb ' + deg + 'deg)';
+            gaugeValue.style.color = color;
+            riskTag.className = 'risk-tag ' + riskClass;
+            riskTag.textContent = riskLabel;
+
+            // Summary
+            document.getElementById('summaryText').textContent = data.summary;
+
+            // Transition path
+            const tp = data.transitionPath;
+            if (tp) {
+                document.getElementById('suggestedRole').textContent = tp.suggestedRole || '待评估';
+
+                const tagsContainer = document.getElementById('skillTags');
+                tagsContainer.innerHTML = '';
+                (tp.transferableSkills || []).forEach(function(skill) {
+                    const tag = document.createElement('span');
+                    tag.className = 'skill-tag';
+                    tag.textContent = skill;
+                    tagsContainer.appendChild(tag);
+                });
+
+                document.getElementById('skillGap').textContent = tp.skillGap || '待评估';
+                document.getElementById('encouragement').textContent = tp.encouragement || '';
+                document.getElementById('transitionCard').style.display = 'block';
+            } else {
+                document.getElementById('transitionCard').style.display = 'none';
+            }
+
+            resultArea.classList.add('visible');
+        }
+
+        function showError(msg) {
+            const errorBox = document.getElementById('errorBox');
+            errorBox.textContent = msg;
+            errorBox.classList.add('visible');
+        }
+
+        document.getElementById('jobInput').addEventListener('keydown', function(e) {
+            if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) analyze();
+        });
+    </script>
+</body>
+</html>
