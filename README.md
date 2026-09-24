@@ -41,7 +41,7 @@ export AI_DASHSCOPE_API_KEY=your_key_here
 ./mvnw spring-boot:run
 ```
 
-服务默认监听 `http://localhost:8080`。
+服务默认监听 `http://localhost:8089`。
 
 ### 调用示例
 

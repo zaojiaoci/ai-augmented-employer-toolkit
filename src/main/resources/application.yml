@@ -1,6 +1,12 @@
+server:
+  port: ${SERVER_PORT:8089}
 spring:
   application:
     name: ai-augmented-employer-toolkit
+  autoconfigure:
+    exclude:
+      - com.alibaba.cloud.ai.autoconfigure.dashscope.DashScopeMultimodalEmbeddingAutoConfiguration
+      - com.alibaba.cloud.ai.autoconfigure.dashscope.DashScopeAudioAutoConfiguration
   ai:
     dashscope:
       api-key: ${AI_DASHSCOPE_API_KEY:}
