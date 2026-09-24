@@ -8,7 +8,11 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
-
+/**
+ * @description:
+ * @author: zaojiaoci
+ * @date: 2026年09月24日 23:24:13
+ */
 @RestController
 @RequestMapping("/api")
 public class AnalyzeController {
