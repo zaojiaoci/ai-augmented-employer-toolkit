@@ -35,5 +35,20 @@ build/
 ### macOS ###
 .DS_Store
 
+### Windows ###
+Thumbs.db
+desktop.ini
+
+### Environment / Secrets ###
+.env
+.env.*
+!.env.example
+
 ### Logs ###
 *.log
+
+### Packaged application ###
+*.jar
+*.war
+*.ear
+!mvnw.cmd

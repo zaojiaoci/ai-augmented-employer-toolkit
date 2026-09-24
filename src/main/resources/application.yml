@@ -15,3 +15,15 @@ spring:
           model: ${ANALYZE_MODEL:qwen-plus}
           temperature: 0.3
           top-p: 0.85
+      embedding:
+        options:
+          model: text-embedding-v3
+    # --- pgvector（取消注释并配置连接信息，即可从内存向量库切换到 PostgreSQL） ---
+    # vectorstore:
+    #   pgvector:
+    #     url: ${DATABASE_URL:jdbc:postgresql://localhost:5432/employer_toolkit}
+    #     username: ${DATABASE_USERNAME:postgres}
+    #     password: ${DATABASE_PASSWORD:postgres}
+    #     index-type: HNSW
+    #     distance-type: COSINE_DISTANCE
+    #     initialize-schema: true
