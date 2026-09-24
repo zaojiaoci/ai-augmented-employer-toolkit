@@ -24,4 +24,16 @@ public class ChatClientConfig {
                 .build();
     }
 
+    /**
+     * 流式对话专用 ChatClient，与 analyzeChatClient 分开，
+     * 避免 BeanOutputConverter 的格式指令污染流式输出。
+     */
+    @Bean
+    public ChatClient streamingChatClient(ChatModel chatModel) throws IOException {
+        String systemPrompt = promptResource.getContentAsString(StandardCharsets.UTF_8);
+        return ChatClient.builder(chatModel)
+                .defaultSystem(systemPrompt)
+                .build();
+    }
+
 }

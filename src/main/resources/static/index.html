@@ -183,6 +183,65 @@
 
         @keyframes spin { to { transform: rotate(360deg); } }
 
+        /* Streaming output area */
+        .streaming-card {
+            display: none;
+            background: #fff;
+            border-radius: 12px;
+            padding: 24px 28px;
+            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06);
+            margin-bottom: 24px;
+            position: relative;
+        }
+
+        .streaming-card.visible { display: block; animation: fadeIn 0.3s ease; }
+
+        .streaming-label {
+            font-size: 13px;
+            font-weight: 600;
+            color: #6366f1;
+            margin-bottom: 12px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .streaming-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: #6366f1;
+            animation: pulse 1.2s ease-in-out infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 0.3; transform: scale(0.8); }
+            50% { opacity: 1; transform: scale(1); }
+        }
+
+        .streaming-text {
+            font-size: 14px;
+            line-height: 1.8;
+            color: #374151;
+            white-space: pre-wrap;
+            word-break: break-word;
+            min-height: 40px;
+        }
+
+        .streaming-cursor {
+            display: inline-block;
+            width: 2px;
+            height: 16px;
+            background: #6366f1;
+            margin-left: 2px;
+            vertical-align: text-bottom;
+            animation: blink 0.8s step-end infinite;
+        }
+
+        @keyframes blink {
+            50% { opacity: 0; }
+        }
+
         /* Result area */
         .result { display: none; animation: fadeIn 0.4s ease; }
         .result.visible { display: block; }
@@ -334,6 +393,96 @@
             line-height: 1.7;
         }
 
+        /* Follow-up conversation area */
+        .followup-card {
+            display: none;
+            background: #fff;
+            border-radius: 12px;
+            padding: 24px 28px;
+            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06);
+            margin-bottom: 24px;
+        }
+
+        .followup-card.visible { display: block; animation: fadeIn 0.3s ease; }
+
+        .followup-label {
+            font-size: 14px;
+            font-weight: 600;
+            color: #374151;
+            margin-bottom: 8px;
+        }
+
+        .followup-hint {
+            font-size: 12px;
+            color: #9ca3af;
+            margin-bottom: 12px;
+        }
+
+        .followup-input-row {
+            display: flex;
+            gap: 10px;
+        }
+
+        .followup-input {
+            flex: 1;
+            padding: 10px 14px;
+            border: 1.5px solid #d1d5db;
+            border-radius: 8px;
+            font-size: 14px;
+            font-family: inherit;
+            line-height: 1.5;
+            transition: border-color 0.2s;
+            color: #1a1a2e;
+            background: #fafbfc;
+        }
+
+        .followup-input:focus {
+            outline: none;
+            border-color: #6366f1;
+            background: #fff;
+        }
+
+        .followup-input::placeholder { color: #9ca3af; }
+
+        .followup-btn {
+            padding: 10px 20px;
+            border: none;
+            border-radius: 8px;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s;
+            background: #6366f1;
+            color: #fff;
+            white-space: nowrap;
+        }
+
+        .followup-btn:hover:not(:disabled) {
+            background: #4f46e5;
+        }
+
+        .followup-btn:disabled { opacity: 0.6; cursor: not-allowed; }
+
+        /* Follow-up response area */
+        .followup-response {
+            display: none;
+            margin-top: 16px;
+            padding: 16px;
+            background: #f9fafb;
+            border-radius: 8px;
+            border-left: 3px solid #6366f1;
+        }
+
+        .followup-response.visible { display: block; animation: fadeIn 0.3s ease; }
+
+        .followup-response-text {
+            font-size: 14px;
+            line-height: 1.8;
+            color: #374151;
+            white-space: pre-wrap;
+            word-break: break-word;
+        }
+
         /* Error */
         .error {
             display: none;
@@ -399,7 +548,16 @@
         <!-- Error -->
         <div class="error" id="errorBox"></div>
 
-        <!-- Result -->
+        <!-- Streaming output (shown during analysis) -->
+        <div class="streaming-card" id="streamingCard">
+            <div class="streaming-label">
+                <span class="streaming-dot"></span>
+                <span id="streamingLabel">AI 正在分析中...</span>
+            </div>
+            <div class="streaming-text" id="streamingText"></div>
+        </div>
+
+        <!-- Result (shown after streaming completes) -->
         <div class="result" id="resultArea">
             <!-- Gauge card -->
             <div class="card">
@@ -443,20 +601,40 @@
             </div>
         </div>
 
+        <!-- Follow-up conversation -->
+        <div class="followup-card" id="followupCard">
+            <div class="followup-label">继续追问</div>
+            <div class="followup-hint">可以针对分析结果进一步提问，例如："这个岗位具体需要学什么课程？"、"转岗后薪资预期如何？"</div>
+            <div class="followup-input-row">
+                <input type="text" class="followup-input" id="followupInput" placeholder="输入你的追问..." />
+                <button class="followup-btn" id="followupBtn" onclick="askFollowup()">追问</button>
+            </div>
+            <div class="followup-response" id="followupResponse">
+                <div class="followup-response-text" id="followupResponseText"></div>
+            </div>
+        </div>
+
         <footer>
             AI-Augmented Employer Toolkit &middot; 让 AI 增强而非替代
         </footer>
     </div>
 
     <script>
+        // Session ID for multi-turn conversation
+        var sessionId = (crypto.randomUUID ? crypto.randomUUID() : 'sess-' + Date.now());
+
         async function analyze() {
-            const input = document.getElementById('jobInput').value.trim();
-            const btn = document.getElementById('analyzeBtn');
-            const errorBox = document.getElementById('errorBox');
-            const resultArea = document.getElementById('resultArea');
+            var input = document.getElementById('jobInput').value.trim();
+            var btn = document.getElementById('analyzeBtn');
+            var errorBox = document.getElementById('errorBox');
+            var resultArea = document.getElementById('resultArea');
+            var streamingCard = document.getElementById('streamingCard');
+            var followupCard = document.getElementById('followupCard');
 
             errorBox.classList.remove('visible');
             resultArea.classList.remove('visible');
+            followupCard.classList.remove('visible');
+            streamingCard.classList.remove('visible');
 
             if (!input) {
                 showError('请先输入一段岗位描述');
@@ -466,8 +644,16 @@
             btn.classList.add('loading');
             btn.disabled = true;
 
+            // Show streaming card
+            streamingCard.classList.add('visible');
+            var streamingText = document.getElementById('streamingText');
+            streamingText.innerHTML = '<span class="streaming-cursor"></span>';
+            document.getElementById('streamingLabel').textContent = 'AI 正在分析中...';
+
+            var fullText = '';
+
             try {
-                const res = await fetch('/api/analyze', {
+                var res = await fetch('/api/analyze/stream?sessionId=' + encodeURIComponent(sessionId), {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ jobDescription: input })
@@ -475,9 +661,58 @@
 
                 if (!res.ok) throw new Error('服务器返回 ' + res.status + '，请稍后重试');
 
-                const data = await res.json();
-                showResult(data);
+                var reader = res.body.getReader();
+                var decoder = new TextDecoder();
+                var buffer = '';
+
+                while (true) {
+                    var result = await reader.read();
+                    if (result.done) break;
+
+                    buffer += decoder.decode(result.value, { stream: true });
+
+                    // Parse SSE: extract data from "data:xxx" lines
+                    var lines = buffer.split('\n');
+                    buffer = '';
+
+                    for (var i = 0; i < lines.length; i++) {
+                        var line = lines[i];
+                        if (line.startsWith('data:')) {
+                            var data = line.substring(5);
+                            fullText += data;
+                        } else if (line.trim() === '' && i === lines.length - 1) {
+                            // Last empty line, might be SSE event boundary
+                        } else if (i === lines.length - 1) {
+                            // Incomplete line, buffer it
+                            buffer = line;
+                        }
+                    }
+
+                    // Update streaming display with cursor
+                    streamingText.innerHTML = escapeHtml(fullText) + '<span class="streaming-cursor"></span>';
+                    streamingText.scrollTop = streamingText.scrollHeight;
+                }
+
+                // Remove cursor, show final streaming text
+                streamingText.innerHTML = escapeHtml(fullText);
+                document.getElementById('streamingLabel').textContent = '分析完成';
+
+                // Try to parse JSON and render structured result
+                var data = tryParseJson(fullText);
+                if (data && typeof data.automationRatio === 'number') {
+                    // Hide streaming card, show structured result
+                    streamingCard.classList.remove('visible');
+                    showResult(data);
+                } else {
+                    // Could not parse as structured JSON, keep streaming text visible
+                    // and still show follow-up
+                }
+
+                // Show follow-up card
+                followupCard.classList.add('visible');
+
             } catch (err) {
+                streamingCard.classList.remove('visible');
                 showError(err.message || '网络请求失败，请检查服务是否已启动');
             } finally {
                 btn.classList.remove('loading');
@@ -485,18 +720,77 @@
             }
         }
 
+        async function askFollowup() {
+            var input = document.getElementById('followupInput').value.trim();
+            var btn = document.getElementById('followupBtn');
+            var responseArea = document.getElementById('followupResponse');
+            var responseText = document.getElementById('followupResponseText');
+
+            if (!input) return;
+
+            btn.disabled = true;
+            btn.textContent = '思考中...';
+            responseArea.classList.add('visible');
+            responseText.innerHTML = '<span class="streaming-cursor"></span>';
+
+            var fullText = '';
+
+            try {
+                var res = await fetch('/api/analyze/stream?sessionId=' + encodeURIComponent(sessionId), {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ jobDescription: input })
+                });
+
+                if (!res.ok) throw new Error('服务器返回 ' + res.status);
+
+                var reader = res.body.getReader();
+                var decoder = new TextDecoder();
+                var buffer = '';
+
+                while (true) {
+                    var result = await reader.read();
+                    if (result.done) break;
+
+                    buffer += decoder.decode(result.value, { stream: true });
+                    var lines = buffer.split('\n');
+                    buffer = '';
+
+                    for (var i = 0; i < lines.length; i++) {
+                        var line = lines[i];
+                        if (line.startsWith('data:')) {
+                            fullText += line.substring(5);
+                        } else if (i === lines.length - 1) {
+                            buffer = line;
+                        }
+                    }
+
+                    responseText.innerHTML = escapeHtml(fullText) + '<span class="streaming-cursor"></span>';
+                }
+
+                responseText.innerHTML = escapeHtml(fullText);
+
+            } catch (err) {
+                responseText.textContent = '请求失败: ' + err.message;
+            } finally {
+                btn.disabled = false;
+                btn.textContent = '追问';
+                document.getElementById('followupInput').value = '';
+            }
+        }
+
         function showResult(data) {
-            const ratio = data.automationRatio;
-            const pct = Math.round(ratio * 100);
-            const gaugeValue = document.getElementById('gaugeValue');
-            const gauge = document.getElementById('gauge');
-            const riskTag = document.getElementById('riskTag');
-            const resultArea = document.getElementById('resultArea');
+            var ratio = data.automationRatio;
+            var pct = Math.round(ratio * 100);
+            var gaugeValue = document.getElementById('gaugeValue');
+            var gauge = document.getElementById('gauge');
+            var riskTag = document.getElementById('riskTag');
+            var resultArea = document.getElementById('resultArea');
 
             // Gauge
             gaugeValue.textContent = pct + '%';
 
-            let color, riskClass, riskLabel;
+            var color, riskClass, riskLabel;
             if (ratio <= 0.35) {
                 color = '#059669'; riskClass = 'risk-low'; riskLabel = '低风险 - AI 更适合辅助';
             } else if (ratio <= 0.65) {
@@ -505,7 +799,7 @@
                 color = '#dc2626'; riskClass = 'risk-high'; riskLabel = '高风险 - 建议尽早规划转岗';
             }
 
-            const deg = ratio * 360;
+            var deg = ratio * 360;
             gauge.style.background = 'conic-gradient(' + color + ' 0deg, ' + color + ' ' + deg + 'deg, #e5e7eb ' + deg + 'deg)';
             gaugeValue.style.color = color;
             riskTag.className = 'risk-tag ' + riskClass;
@@ -515,14 +809,14 @@
             document.getElementById('summaryText').textContent = data.summary;
 
             // Transition path
-            const tp = data.transitionPath;
+            var tp = data.transitionPath;
             if (tp) {
                 document.getElementById('suggestedRole').textContent = tp.suggestedRole || '待评估';
 
-                const tagsContainer = document.getElementById('skillTags');
+                var tagsContainer = document.getElementById('skillTags');
                 tagsContainer.innerHTML = '';
                 (tp.transferableSkills || []).forEach(function(skill) {
-                    const tag = document.createElement('span');
+                    var tag = document.createElement('span');
                     tag.className = 'skill-tag';
                     tag.textContent = skill;
                     tagsContainer.appendChild(tag);
@@ -538,14 +832,39 @@
             resultArea.classList.add('visible');
         }
 
+        function tryParseJson(text) {
+            try {
+                // Strip markdown code fences
+                var cleaned = text.trim();
+                if (cleaned.startsWith('```json')) cleaned = cleaned.substring(7);
+                else if (cleaned.startsWith('```')) cleaned = cleaned.substring(3);
+                if (cleaned.endsWith('```')) cleaned = cleaned.substring(0, cleaned.length - 3);
+                cleaned = cleaned.trim();
+                return JSON.parse(cleaned);
+            } catch (e) {
+                return null;
+            }
+        }
+
+        function escapeHtml(text) {
+            var div = document.createElement('div');
+            div.appendChild(document.createTextNode(text));
+            return div.innerHTML;
+        }
+
         function showError(msg) {
-            const errorBox = document.getElementById('errorBox');
+            var errorBox = document.getElementById('errorBox');
             errorBox.textContent = msg;
             errorBox.classList.add('visible');
         }
 
+        // Keyboard shortcuts
         document.getElementById('jobInput').addEventListener('keydown', function(e) {
             if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) analyze();
+        });
+
+        document.getElementById('followupInput').addEventListener('keydown', function(e) {
+            if (e.key === 'Enter') askFollowup();
         });
     </script>
 </body>
