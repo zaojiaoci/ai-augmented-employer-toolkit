@@ -44,6 +44,9 @@ desktop.ini
 .env.*
 !.env.example
 
+### Issue drafts (local reference only) ###
+docs/
+
 ### Logs ###
 *.log
 

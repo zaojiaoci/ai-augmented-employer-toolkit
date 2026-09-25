@@ -4,6 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>AI 增强型雇主 - 岗位自动化分析</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/marked/15.0.7/marked.min.js"></script>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
 
@@ -448,7 +449,6 @@
             color: #374151;
             border-radius: 16px 16px 16px 4px;
             box-shadow: 0 1px 3px rgba(0,0,0,0.05);
-            white-space: pre-wrap;
         }
 
         .chat-input-bar {
@@ -529,7 +529,6 @@
             font-size: 14px;
             line-height: 1.8;
             color: #374151;
-            white-space: pre-wrap;
             word-break: break-word;
             min-height: 32px;
         }
@@ -581,6 +580,93 @@
             margin-top: 32px;
             font-size: 12px;
             color: #9ca3af;
+        }
+
+        /* ===== Markdown typography (for streaming text and chat bubbles) ===== */
+        .md-content h1, .md-content h2, .md-content h3,
+        .md-content h4, .md-content h5, .md-content h6 {
+            margin-top: 1em;
+            margin-bottom: 0.4em;
+            font-weight: 600;
+            line-height: 1.4;
+        }
+
+        .md-content h1 { font-size: 1.3em; }
+        .md-content h2 { font-size: 1.15em; }
+        .md-content h3 { font-size: 1.05em; }
+
+        .md-content h1:first-child, .md-content h2:first-child,
+        .md-content h3:first-child { margin-top: 0; }
+
+        .md-content p {
+            margin-bottom: 0.6em;
+        }
+
+        .md-content p:last-child { margin-bottom: 0; }
+
+        .md-content ul, .md-content ol {
+            margin: 0.5em 0;
+            padding-left: 1.5em;
+        }
+
+        .md-content li {
+            margin-bottom: 0.3em;
+        }
+
+        .md-content strong { font-weight: 600; }
+
+        .md-content em { font-style: italic; }
+
+        .md-content code {
+            background: #f3f4f6;
+            padding: 1px 5px;
+            border-radius: 4px;
+            font-size: 0.9em;
+            font-family: "SF Mono", "Fira Code", monospace;
+        }
+
+        .md-content pre {
+            background: #f3f4f6;
+            padding: 12px 16px;
+            border-radius: 8px;
+            overflow-x: auto;
+            margin: 0.6em 0;
+        }
+
+        .md-content pre code {
+            background: none;
+            padding: 0;
+        }
+
+        .md-content blockquote {
+            border-left: 3px solid #d1d5db;
+            padding-left: 12px;
+            margin: 0.6em 0;
+            color: #6b7280;
+        }
+
+        .md-content hr {
+            border: none;
+            border-top: 1px solid #e5e7eb;
+            margin: 1em 0;
+        }
+
+        .md-content table {
+            border-collapse: collapse;
+            margin: 0.6em 0;
+            font-size: 0.9em;
+            width: 100%;
+        }
+
+        .md-content th, .md-content td {
+            border: 1px solid #e5e7eb;
+            padding: 6px 10px;
+            text-align: left;
+        }
+
+        .md-content th {
+            background: #f9fafb;
+            font-weight: 600;
         }
 
         /* ===== Responsive ===== */
@@ -649,7 +735,7 @@
                 <span class="streaming-dot"></span>
                 <span id="streamingLabel">AI 正在分析中...</span>
             </div>
-            <div class="streaming-text" id="streamingText"></div>
+            <div class="streaming-text md-content" id="streamingText"></div>
         </div>
 
         <!-- Structured result (shown after streaming parses to JSON) -->
@@ -702,6 +788,11 @@
     </div>
 
     <script>
+        // Configure marked.js
+        if (typeof marked !== 'undefined') {
+            marked.setOptions({ breaks: true, gfm: true });
+        }
+
         var sessionId = (crypto.randomUUID ? crypto.randomUUID() : 'sess-' + Date.now());
 
         function toggleCaseBar() {
@@ -766,11 +857,11 @@
                         }
                     }
 
-                    streamingText.innerHTML = renderCitations(escapeHtml(fullText)) + '<span class="streaming-cursor"></span>';
+                    streamingText.innerHTML = renderMarkdown(fullText) + '<span class="streaming-cursor"></span>';
                     streamingText.scrollTop = streamingText.scrollHeight;
                 }
 
-                streamingText.innerHTML = renderCitations(escapeHtml(fullText));
+                streamingText.innerHTML = renderMarkdown(fullText);
                 document.getElementById('streamingLabel').textContent = '分析完成';
 
                 var data = tryParseJson(fullText);
@@ -846,11 +937,11 @@
                         }
                     }
 
-                    aiBubble.innerHTML = renderCitations(escapeHtml(fullText)) + '<span class="streaming-cursor"></span>';
+                    aiBubble.innerHTML = renderMarkdown(fullText) + '<span class="streaming-cursor"></span>';
                     messages.scrollTop = messages.scrollHeight;
                 }
 
-                aiBubble.innerHTML = renderCitations(escapeHtml(fullText));
+                aiBubble.innerHTML = renderMarkdown(fullText);
 
             } catch (err) {
                 aiBubble.textContent = '请求失败: ' + err.message;
@@ -929,11 +1020,20 @@
             return div.innerHTML;
         }
 
-        function renderCitations(html) {
-            return html.replace(
+        function renderMarkdown(text) {
+            // Step 1: Insert citation tags (before markdown parsing)
+            var withCitations = text.replace(
                 /\(([a-zA-Z0-9\u4e00-\u9fff_-]+\.(md|pdf|txt|docx))\)/g,
                 '<span class="source-citation">$1</span>'
             );
+            // Step 2: Render markdown to HTML
+            if (typeof marked !== 'undefined') {
+                return marked.parse(withCitations);
+            }
+            // Fallback: basic escape + line breaks
+            var div = document.createElement('div');
+            div.appendChild(document.createTextNode(withCitations));
+            return div.innerHTML.replace(/\n/g, '<br>');
         }
 
         function showError(msg) {
