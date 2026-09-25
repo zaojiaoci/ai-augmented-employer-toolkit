@@ -420,15 +420,14 @@
         .chat-messages {
             display: flex;
             flex-direction: column;
-            gap: 12px;
+            gap: 14px;
             margin-bottom: 12px;
-            max-height: 400px;
+            max-height: 460px;
             overflow-y: auto;
-            padding: 4px 2px;
+            padding: 6px 2px;
         }
 
         .chat-bubble {
-            max-width: 85%;
             padding: 12px 16px;
             font-size: 14px;
             line-height: 1.75;
@@ -438,6 +437,7 @@
 
         .chat-bubble.user {
             align-self: flex-end;
+            max-width: 78%;
             background: #6366f1;
             color: #fff;
             border-radius: 16px 16px 4px 16px;
@@ -445,6 +445,9 @@
 
         .chat-bubble.assistant {
             align-self: flex-start;
+            max-width: 92%;
+            padding: 16px 20px;
+            line-height: 1.85;
             background: #fff;
             color: #374151;
             border-radius: 16px 16px 16px 4px;
@@ -496,7 +499,7 @@
             display: none;
             background: #fff;
             border-radius: 12px;
-            padding: 20px 24px;
+            padding: 22px 28px;
             box-shadow: 0 1px 3px rgba(0,0,0,0.05);
             margin-bottom: 16px;
         }
@@ -527,7 +530,7 @@
 
         .streaming-text {
             font-size: 14px;
-            line-height: 1.8;
+            line-height: 1.85;
             color: #374151;
             word-break: break-word;
             min-height: 32px;
@@ -583,90 +586,169 @@
         }
 
         /* ===== Markdown typography (for streaming text and chat bubbles) ===== */
-        .md-content h1, .md-content h2, .md-content h3,
-        .md-content h4, .md-content h5, .md-content h6 {
-            margin-top: 1em;
-            margin-bottom: 0.4em;
-            font-weight: 600;
-            line-height: 1.4;
+        .md-content {
+            font-size: 14px;
+            line-height: 1.75;
+            color: #374151;
         }
 
-        .md-content h1 { font-size: 1.3em; }
-        .md-content h2 { font-size: 1.15em; }
-        .md-content h3 { font-size: 1.05em; }
+        .md-content h1, .md-content h2, .md-content h3,
+        .md-content h4, .md-content h5, .md-content h6 {
+            margin-top: 1.25em;
+            margin-bottom: 0.6em;
+            font-weight: 700;
+            line-height: 1.35;
+            color: #1a1a2e;
+            position: relative;
+        }
+
+        .md-content h1 {
+            font-size: 1.4em;
+            padding-bottom: 0.35em;
+            border-bottom: 1px solid #eef0f5;
+        }
+
+        .md-content h2 {
+            font-size: 1.2em;
+            padding-left: 10px;
+            border-left: 3px solid #6366f1;
+            color: #4338ca;
+        }
+
+        .md-content h3 { font-size: 1.08em; color: #1e293b; }
+        .md-content h4 { font-size: 1em; }
 
         .md-content h1:first-child, .md-content h2:first-child,
         .md-content h3:first-child { margin-top: 0; }
 
         .md-content p {
-            margin-bottom: 0.6em;
+            margin-bottom: 0.85em;
         }
 
         .md-content p:last-child { margin-bottom: 0; }
 
         .md-content ul, .md-content ol {
-            margin: 0.5em 0;
-            padding-left: 1.5em;
+            margin: 0.7em 0;
+            padding-left: 1.6em;
         }
 
         .md-content li {
-            margin-bottom: 0.3em;
+            margin-bottom: 0.35em;
+            line-height: 1.75;
         }
 
-        .md-content strong { font-weight: 600; }
+        .md-content ul li::marker {
+            color: #6366f1;
+        }
+
+        .md-content ol li::marker {
+            color: #6366f1;
+            font-weight: 600;
+        }
+
+        .md-content ul ul, .md-content ol ol,
+        .md-content ul ol, .md-content ol ul {
+            margin: 0.35em 0;
+        }
+
+        .md-content strong {
+            font-weight: 700;
+            color: #1a1a2e;
+        }
 
         .md-content em { font-style: italic; }
 
+        .md-content a {
+            color: #4f46e5;
+            text-decoration: none;
+            border-bottom: 1px solid rgba(99, 102, 241, 0.35);
+            transition: border-color 0.15s, color 0.15s;
+        }
+
+        .md-content a:hover {
+            color: #4338ca;
+            border-bottom-color: #4338ca;
+        }
+
         .md-content code {
-            background: #f3f4f6;
-            padding: 1px 5px;
+            background: #eef2ff;
+            color: #4338ca;
+            padding: 1.5px 6px;
             border-radius: 4px;
-            font-size: 0.9em;
-            font-family: "SF Mono", "Fira Code", monospace;
+            font-size: 0.85em;
+            font-family: "SF Mono", "JetBrains Mono", "Fira Code", Menlo, monospace;
+            border: 1px solid rgba(99, 102, 241, 0.15);
         }
 
         .md-content pre {
-            background: #f3f4f6;
-            padding: 12px 16px;
+            background: #0f172a;
+            color: #e2e8f0;
+            padding: 14px 18px;
             border-radius: 8px;
             overflow-x: auto;
-            margin: 0.6em 0;
+            margin: 0.9em 0;
+            font-size: 0.85em;
+            line-height: 1.65;
+            box-shadow: 0 2px 8px rgba(15, 23, 42, 0.15);
         }
 
         .md-content pre code {
             background: none;
+            color: inherit;
             padding: 0;
+            border: none;
+            font-size: 1em;
         }
 
         .md-content blockquote {
-            border-left: 3px solid #d1d5db;
-            padding-left: 12px;
-            margin: 0.6em 0;
-            color: #6b7280;
+            border-left: 3px solid #a5b4fc;
+            background: #f5f3ff;
+            padding: 10px 16px;
+            margin: 0.9em 0;
+            color: #4c1d95;
+            border-radius: 0 6px 6px 0;
+            font-style: normal;
         }
+
+        .md-content blockquote p { margin-bottom: 0.35em; }
+        .md-content blockquote p:last-child { margin-bottom: 0; }
 
         .md-content hr {
             border: none;
             border-top: 1px solid #e5e7eb;
-            margin: 1em 0;
+            margin: 1.4em 0;
         }
 
         .md-content table {
-            border-collapse: collapse;
-            margin: 0.6em 0;
+            border-collapse: separate;
+            border-spacing: 0;
+            margin: 1em 0;
             font-size: 0.9em;
             width: 100%;
+            border: 1px solid #e5e7eb;
+            border-radius: 8px;
+            overflow: hidden;
         }
 
         .md-content th, .md-content td {
-            border: 1px solid #e5e7eb;
-            padding: 6px 10px;
+            padding: 10px 14px;
             text-align: left;
+            border-bottom: 1px solid #f1f2f6;
         }
 
-        .md-content th {
-            background: #f9fafb;
+        .md-content thead th {
+            background: #f8f9fc;
             font-weight: 600;
+            color: #1a1a2e;
+            border-bottom: 1px solid #e5e7eb;
+        }
+
+        .md-content tbody tr:nth-child(even) {
+            background: #fafbfc;
+        }
+
+        .md-content tbody tr:last-child td {
+            border-bottom: none;
         }
 
         /* ===== Responsive ===== */
@@ -676,7 +758,9 @@
             .dashboard { padding: 20px; }
             .transition-card { padding: 20px; }
             .case-bar { padding: 12px 16px; }
-            .chat-bubble { max-width: 92%; }
+            .chat-bubble.user { max-width: 88%; }
+            .chat-bubble.assistant { max-width: 96%; padding: 14px 16px; }
+            .streaming-card { padding: 18px 20px; }
         }
     </style>
 </head>
@@ -896,7 +980,7 @@
 
             // Add assistant placeholder bubble
             var aiBubble = document.createElement('div');
-            aiBubble.className = 'chat-bubble assistant';
+            aiBubble.className = 'chat-bubble assistant md-content';
             aiBubble.innerHTML = '<span class="streaming-cursor"></span>';
             messages.appendChild(aiBubble);
 
