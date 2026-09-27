@@ -2,104 +2,221 @@ package io.github.aiaugmentedemployertoolkit.service;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import io.github.aiaugmentedemployertoolkit.config.SystemPrompt;
 import io.github.aiaugmentedemployertoolkit.dto.AnalyzeResponse;
+import io.github.aiaugmentedemployertoolkit.dto.TaskBreakdown;
 import io.github.aiaugmentedemployertoolkit.dto.TransitionPath;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.messages.Message;
+import org.springframework.ai.chat.model.ChatResponse;
 import org.springframework.ai.converter.BeanOutputConverter;
-import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import reactor.core.publisher.Flux;
+import reactor.core.publisher.Mono;
+import reactor.core.scheduler.Schedulers;
+import reactor.util.retry.Retry;
 
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicReference;
 
+/**
+ * 岗位自动化分析核心业务。
+ * <p>
+ * 相比改造前的变化：
+ * 1. 格式指令只在 {@link #buildSystemPrompt} 一处注入，不再同时出现在系统提示词、
+ *    {@code BeanOutputConverter} 和用户输入三处；
+ * 2. 流式输出不再把 JSON 源码推给前端，正文与结构化结果分离（见 {@link ResultSplitter}）；
+ * 3. 会话记忆只写入自然语言正文，不把上一轮的 JSON 塞回上下文；
+ * 4. 补齐校验、限流、超时、重试与 token 统计。
+ */
 @Service
 public class AnalyzeService {
 
     private static final Logger log = LoggerFactory.getLogger(AnalyzeService.class);
 
-    private final ChatClient analyzeChatClient;
-    private final ChatClient streamingChatClient;
-    private final ConversationMemoryStore memory;
+    /** 流式结果事件前缀，前端据此识别结构化结果 */
+    public static final String RESULT_EVENT_PREFIX = "[[RESULT]]";
+
+    private static final String SYNC_LABEL = "analyze";
+    private static final String STREAM_LABEL = "analyze-stream";
+    private static final String RATE_LIMIT_KEY_SYNC = "analyze:sync";
+    private static final String RATE_LIMIT_KEY_STREAM = "analyze:stream";
+
+    private static final String DEFAULT_DISCLAIMER =
+            "该比率指「可自动化任务」占全部任务的比重，不等于人员缩减比例；可增强任务才是人机协作的主要机会。";
+
+    private final ChatClient chatClient;
+    private final ConversationMemory memory;
+    private final InputValidator validator;
+    private final TokenBucketRateLimiter rateLimiter;
+    private final LlmUsageMetrics metrics;
     private final ObjectMapper objectMapper;
     private final BeanOutputConverter<AnalyzeResponse> outputConverter;
+    private final String baseSystemPrompt;
 
-    public AnalyzeService(
-            @Qualifier("analyzeChatClient") ChatClient analyzeChatClient,
-            @Qualifier("streamingChatClient") ChatClient streamingChatClient,
-            ConversationMemoryStore memory) {
-        this.analyzeChatClient = analyzeChatClient;
-        this.streamingChatClient = streamingChatClient;
+    private final long timeoutSeconds;
+    private final long streamTimeoutSeconds;
+    private final int maxRetries;
+
+    public AnalyzeService(ChatClient chatClient,
+                          SystemPrompt systemPrompt,
+                          ConversationMemory memory,
+                          InputValidator validator,
+                          TokenBucketRateLimiter rateLimiter,
+                          LlmUsageMetrics metrics,
+                          @Value("${app.analysis.timeout-seconds:120}") long timeoutSeconds,
+                          @Value("${app.analysis.stream-timeout-seconds:180}") long streamTimeoutSeconds,
+                          @Value("${app.analysis.max-retries:2}") int maxRetries) {
+        this.chatClient = chatClient;
+        this.baseSystemPrompt = systemPrompt.text();
         this.memory = memory;
+        this.validator = validator;
+        this.rateLimiter = rateLimiter;
+        this.metrics = metrics;
         this.objectMapper = new ObjectMapper();
         this.outputConverter = new BeanOutputConverter<>(AnalyzeResponse.class);
+        this.timeoutSeconds = Math.max(1, timeoutSeconds);
+        this.streamTimeoutSeconds = Math.max(1, streamTimeoutSeconds);
+        this.maxRetries = Math.max(0, maxRetries);
     }
 
     /**
-     * 同步分析（原有接口，使用 BeanOutputConverter 替代手动 JSON 解析）
+     * 同步分析：校验 → 限流 → 调用 → 结构化解析。
      */
     public AnalyzeResponse analyze(String jobDescription) {
-        log.info("开始分析岗位描述，长度: {} 字符", jobDescription.length());
+        String input = validator.validate(jobDescription);
+        if (!rateLimiter.tryAcquire(RATE_LIMIT_KEY_SYNC)) {
+            throw new RateLimitExceededException("分析请求过于频繁，请稍后再试");
+        }
 
-        String formatInstructions = outputConverter.getFormat();
-        String rawResponse = analyzeChatClient.prompt()
-                .user(jobDescription + "\n\n" + formatInstructions)
-                .call()
-                .content();
-
-        log.debug("LLM 原始返回: {}", rawResponse);
-
-        return parseResponse(rawResponse);
+        try {
+            return Mono.fromCallable(() -> callOnce(input))
+                    .subscribeOn(Schedulers.boundedElastic())
+                    .timeout(Duration.ofSeconds(timeoutSeconds))
+                    .retryWhen(Retry.backoff(maxRetries, Duration.ofMillis(400))
+                            .maxBackoff(Duration.ofSeconds(4))
+                            .filter(e -> !(e instanceof IllegalArgumentException)))
+                    .block();
+        } catch (RuntimeException e) {
+            metrics.recordError(SYNC_LABEL);
+            throw new IllegalStateException("AI 分析失败：" + rootMessage(e), e);
+        }
     }
 
     /**
      * 流式分析（SSE），支持多轮追问。
      * <p>
-     * 首次分析（无历史）时追加 JSON 格式指令，确保 LLM 返回结构化 JSON；
-     * 追问时（有历史）不加格式指令，LLM 返回自由文本。
+     * 首次分析（无历史）时系统会追加结构化输出要求；追问时不追加，返回自由文本。
+     * 输出由两类事件组成：普通正文片段，以及最后一条以 {@link #RESULT_EVENT_PREFIX} 开头的结构化结果。
      */
     public Flux<String> analyzeStream(String sessionId, String userText) {
+        final String input;
+        try {
+            input = validator.validate(userText);
+        } catch (IllegalArgumentException e) {
+            return Flux.error(e);
+        }
+        if (!rateLimiter.tryAcquire(RATE_LIMIT_KEY_STREAM)) {
+            return Flux.error(new RateLimitExceededException("分析请求过于频繁，请稍后再试"));
+        }
+
         List<Message> history = memory.history(sessionId);
-        StringBuilder full = new StringBuilder();
+        boolean firstTurn = history.isEmpty();
 
-        // 首次分析追加格式指令，追问时不加
-        String actualInput = history.isEmpty()
-                ? userText + "\n\n请严格按照以下 JSON 格式返回结果：\n" + outputConverter.getFormat()
-                : userText;
+        ResultSplitter splitter = new ResultSplitter();
+        AtomicReference<ChatResponse> lastResponseWithUsage = new AtomicReference<>();
 
-        return streamingChatClient.prompt()
+        Flux<String> body = chatClient.prompt()
+                .system(buildSystemPrompt(firstTurn, true))
                 .messages(history)
-                .user(actualInput)
+                .user(validator.wrapAsUntrusted(input))
                 .stream()
-                .content()
-                .doOnNext(token -> {
-                    if (token != null) {
-                        full.append(token);
+                .chatResponse()
+                .timeout(Duration.ofSeconds(streamTimeoutSeconds))
+                .doOnNext(response -> {
+                    if (response != null && response.getMetadata() != null
+                            && response.getMetadata().getUsage() != null) {
+                        lastResponseWithUsage.set(response);
                     }
                 })
-                .doOnComplete(() -> {
-                    String reply = full.toString().trim();
-                    memory.append(sessionId, userText, reply);
-                    log.debug("流式分析完成，sessionId: {}, 回复长度: {}", sessionId, reply.length());
+                .map(AnalyzeService::textOf)
+                .filter(text -> !text.isEmpty())
+                .map(splitter::accept)
+                .filter(piece -> !piece.isEmpty());
+
+        Flux<String> tail = Flux.defer(() -> {
+            metrics.record(STREAM_LABEL, lastResponseWithUsage.get());
+            String rest = splitter.drainVisible();
+            memory.append(sessionId, input, splitter.getVisibleText());
+
+            String json = compactJson(extractJson(splitter.drainResult()));
+            if (json.isEmpty()) {
+                log.warn("流式输出未包含结构化结果（模型未遵守分隔标记），本次只返回正文");
+                return rest.isEmpty() ? Flux.<String>empty() : Flux.just(rest);
+            }
+            String resultEvent = RESULT_EVENT_PREFIX + json;
+            return rest.isEmpty() ? Flux.just(resultEvent) : Flux.just(rest, resultEvent);
+        });
+
+        return body.concatWith(tail)
+                .onErrorResume(error -> {
+                    metrics.recordError(STREAM_LABEL);
+                    return Flux.error(new IllegalStateException("AI 分析失败：" + rootMessage(error), error));
                 });
     }
 
     /**
-     * 解析 LLM 返回的文本为 AnalyzeResponse。
-     * 优先使用 BeanOutputConverter，失败则回退到手动 JSON 解析。
+     * 构建系统提示词。
+     * <p>
+     * 结构化输出的格式指令只在这里注入一次：需要 JSON 时追加 {@code BeanOutputConverter} 生成的 schema，
+     * 追问时不追加，避免格式指令污染对话。
      */
-    private AnalyzeResponse parseResponse(String rawResponse) {
-        // 优先尝试 BeanOutputConverter
+    String buildSystemPrompt(boolean structured, boolean streaming) {
+        if (!structured) {
+            return baseSystemPrompt;
+        }
+        StringBuilder sb = new StringBuilder(baseSystemPrompt)
+                .append("\n\n## 输出格式\n")
+                .append(outputConverter.getFormat());
+
+        if (streaming) {
+            sb.append("\n\n## 流式输出约定\n")
+                    .append("你的回答会被流式展示给用户，请按以下顺序输出：\n")
+                    .append("1. 先输出面向人的自然语言分析正文，可以使用 Markdown；\n")
+                    .append("2. 正文结束后，在单独一行输出标记 ")
+                    .append(ResultSplitter.PRIMARY_MARKER)
+                    .append("；\n")
+                    .append("3. 标记之后输出严格符合上述格式的 JSON，不要再用代码块包裹。\n");
+        } else {
+            sb.append("\n\n请只输出 JSON，不要输出任何其他文字。\n");
+        }
+        return sb.toString();
+    }
+
+    private AnalyzeResponse callOnce(String input) {
+        ChatResponse response = chatClient.prompt()
+                .system(buildSystemPrompt(true, false))
+                .user(validator.wrapAsUntrusted(input))
+                .call()
+                .chatResponse();
+        metrics.record(SYNC_LABEL, response);
+        return parseResponse(textOf(response));
+    }
+
+    /**
+     * 解析 LLM 返回文本：优先 {@code BeanOutputConverter}，失败回退手动解析，再失败回退纯文本。
+     */
+    AnalyzeResponse parseResponse(String rawResponse) {
         try {
             return outputConverter.convert(rawResponse);
         } catch (Exception e) {
             log.debug("BeanOutputConverter 解析失败，尝试手动 JSON 解析: {}", e.getMessage());
         }
-
-        // 回退到手动 JSON 解析
         return parseJsonManually(rawResponse);
     }
 
@@ -108,22 +225,40 @@ public class AnalyzeService {
             String json = extractJson(rawResponse);
             JsonNode node = objectMapper.readTree(json);
 
-            double ratio = Math.max(0.0, Math.min(1.0,
-                    node.path("automationRatio").asDouble(0.5)));
+            double ratio = Math.max(0.0, Math.min(1.0, node.path("automationRatio").asDouble(0.5)));
             String summary = node.path("summary").asText("无法解析分析结果");
-            TransitionPath path = parseTransitionPath(node.path("transitionPath"));
 
-            return new AnalyzeResponse(ratio, summary, path);
+            return new AnalyzeResponse(
+                    ratio,
+                    summary,
+                    parseTaskBreakdown(node.path("taskBreakdown")),
+                    node.path("ratioBasis").asText(""),
+                    node.path("ratioDisclaimer").asText(DEFAULT_DISCLAIMER),
+                    parseTransitionPath(node.path("transitionPath")));
         } catch (Exception e) {
             log.warn("解析 LLM 返回 JSON 失败，使用原始文本作为 summary: {}", e.getMessage());
-            TransitionPath fallback = new TransitionPath(
-                    List.of("请重新分析以获取转岗建议"),
-                    "待评估",
-                    "待评估",
-                    "每个岗位都有可迁移的核心价值，转岗不是从零开始。"
-            );
-            return new AnalyzeResponse(0.5, rawResponse, fallback);
+            return new AnalyzeResponse(
+                    0.5,
+                    rawResponse,
+                    null,
+                    "",
+                    DEFAULT_DISCLAIMER,
+                    new TransitionPath(
+                            List.of("请重新分析以获取转岗建议"),
+                            "待评估",
+                            "待评估",
+                            "每个岗位都有可迁移的核心价值，转岗不是从零开始。"));
         }
+    }
+
+    private TaskBreakdown parseTaskBreakdown(JsonNode node) {
+        if (node == null || node.isMissingNode()) {
+            return null;
+        }
+        return new TaskBreakdown(
+                toStringList(node.path("automatable")),
+                toStringList(node.path("augmentable")),
+                toStringList(node.path("humanOnly")));
     }
 
     private TransitionPath parseTransitionPath(JsonNode node) {
@@ -132,25 +267,38 @@ public class AnalyzeService {
                     List.of("请重新分析以获取转岗建议"),
                     "待评估",
                     "待评估",
-                    "每个岗位都有可迁移的核心价值，转岗不是从零开始。"
-            );
+                    "每个岗位都有可迁移的核心价值，转岗不是从零开始。");
         }
 
-        List<String> skills = new ArrayList<>();
-        JsonNode skillsNode = node.path("transferableSkills");
-        if (skillsNode.isArray()) {
-            skillsNode.forEach(s -> skills.add(s.asText()));
-        }
+        List<String> skills = toStringList(node.path("transferableSkills"));
 
         return new TransitionPath(
                 skills.isEmpty() ? List.of("待补充") : skills,
                 node.path("suggestedRole").asText("待评估"),
                 node.path("skillGap").asText("待评估"),
-                node.path("encouragement").asText("你的经验是宝贵的资产，转岗是在此之上叠加新能力。")
-        );
+                node.path("encouragement").asText("你的经验是宝贵的资产，转岗是在此之上叠加新能力。"));
     }
 
-    private String extractJson(String raw) {
+    private static List<String> toStringList(JsonNode node) {
+        List<String> values = new ArrayList<>();
+        if (node != null && node.isArray()) {
+            node.forEach(item -> {
+                String text = item.asText("").trim();
+                if (!text.isEmpty()) {
+                    values.add(text);
+                }
+            });
+        }
+        return values;
+    }
+
+    /**
+     * 去掉模型可能添加的 Markdown 代码围栏。
+     */
+    static String extractJson(String raw) {
+        if (raw == null) {
+            return "";
+        }
         String trimmed = raw.trim();
         if (trimmed.startsWith("```json")) {
             trimmed = trimmed.substring(7);
@@ -163,4 +311,35 @@ public class AnalyzeService {
         return trimmed.trim();
     }
 
+    /**
+     * 压缩为单行 JSON。SSE 按行传输，多行 JSON 会被拆成多个 data 事件，前端难以还原。
+     */
+    String compactJson(String json) {
+        if (json == null || json.isEmpty()) {
+            return "";
+        }
+        try {
+            return objectMapper.readTree(json).toString();
+        } catch (Exception e) {
+            log.debug("JSON 无法规范化，退化为删除换行: {}", e.getMessage());
+            return json.replace("\r", "").replace("\n", " ");
+        }
+    }
+
+    static String textOf(ChatResponse response) {
+        if (response == null || response.getResult() == null || response.getResult().getOutput() == null) {
+            return "";
+        }
+        String text = response.getResult().getOutput().getText();
+        return text == null ? "" : text;
+    }
+
+    private static String rootMessage(Throwable error) {
+        Throwable cause = error;
+        while (cause.getCause() != null && cause.getMessage() == null) {
+            cause = cause.getCause();
+        }
+        String message = cause.getMessage();
+        return message == null ? cause.getClass().getSimpleName() : message;
+    }
 }

@@ -18,7 +18,8 @@ spring:
       embedding:
         options:
           model: text-embedding-v3
-    # --- pgvector（取消注释并配置连接信息，即可从内存向量库切换到 PostgreSQL） ---
+    # --- pgvector（需要时重新引入 spring-ai-starter-vector-store-pgvector 依赖，
+    #     并配置下面的连接信息，即可从内存向量库切换到 PostgreSQL） ---
     # vectorstore:
     #   pgvector:
     #     url: ${DATABASE_URL:jdbc:postgresql://localhost:5432/employer_toolkit}
@@ -27,3 +28,34 @@ spring:
     #     index-type: HNSW
     #     distance-type: COSINE_DISTANCE
     #     initialize-schema: true
+
+app:
+  # RAG 检索策略
+  rag:
+    chunk-size: ${APP_RAG_CHUNK_SIZE:600}
+    top-k: ${APP_RAG_TOP_K:5}
+    similarity-threshold: ${APP_RAG_SIMILARITY_THRESHOLD:0.6}
+    # 开启后使用 DashScope rerank 模型重排（Spring AI Alibaba 增强能力，默认关闭）
+    rerank-enabled: ${APP_RAG_RERANK_ENABLED:false}
+    rerank-top-k: ${APP_RAG_RERANK_TOP_K:20}
+    rerank-min-score: ${APP_RAG_RERANK_MIN_SCORE:0.3}
+  # 回答质量评估（LLM-as-a-judge），默认关闭：每次评估额外调用两次 LLM
+  evaluation:
+    enabled: ${APP_EVALUATION_ENABLED:false}
+  # 会话记忆：滑动窗口 + TTL
+  memory:
+    max-messages: ${APP_MEMORY_MAX_MESSAGES:16}
+    ttl-minutes: ${APP_MEMORY_TTL_MINUTES:60}
+    max-sessions: ${APP_MEMORY_MAX_SESSIONS:5000}
+    cleanup-interval-ms: ${APP_MEMORY_CLEANUP_INTERVAL_MS:600000}
+  # 分析调用：超时与重试
+  analysis:
+    timeout-seconds: ${APP_ANALYSIS_TIMEOUT_SECONDS:120}
+    stream-timeout-seconds: ${APP_ANALYSIS_STREAM_TIMEOUT_SECONDS:180}
+    max-retries: ${APP_ANALYSIS_MAX_RETRIES:2}
+    max-input-length: ${APP_ANALYSIS_MAX_INPUT_LENGTH:2000}
+  # 限流：令牌桶
+  rate-limit:
+    capacity: ${APP_RATE_LIMIT_CAPACITY:20}
+    refill-per-minute: ${APP_RATE_LIMIT_REFILL_PER_MINUTE:10}
+    max-tracked-keys: ${APP_RATE_LIMIT_MAX_TRACKED_KEYS:10000}
