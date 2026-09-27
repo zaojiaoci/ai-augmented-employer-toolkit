@@ -7,10 +7,12 @@ import org.springframework.stereotype.Component;
 import java.util.Map;
 
 /**
- * 模拟薪资查询工具。
+ * 薪资查询工具。
  * <p>
- * 当用户询问转岗后的薪资预期、收入对比时，LLM 会自动调用此工具
- * 获取具体薪资数据，而不是凭经验估算。
+ * 当用户询问转岗后的薪资预期、收入对比时，LLM 会自动调用此工具获取具体数据，而不是凭经验估算。
+ * <p>
+ * 这里同时是薪资数据的<b>唯一权威来源</b>：知识库文档 {@code salary-benchmarks.md} 已移除薪资区间，
+ * 只保留入行门槛与学习周期，避免两个数据源给出矛盾数字。
  * <p>
  * 生产环境可替换为对接真实招聘 API（如猎聘、BOSS 直聘等）。
  */
@@ -79,7 +81,7 @@ public class SalaryTool {
             int[] range = tiers.get(cityTier);
             return roleName + " 在" + cityTier + "的年薪范围："
                     + range[0] + "K - " + range[1] + "K（千元），"
-                    + "即约 " + (range[0] / 10) + "万 - " + (range[1] / 10) + "万元/年";
+                    + "即约 " + toWan(range[0]) + " - " + toWan(range[1]) + "/年";
         }
 
         // 返回所有城市等级
@@ -87,10 +89,17 @@ public class SalaryTool {
         tiers.forEach((tier, range) ->
                 sb.append("  ").append(tier).append("：")
                         .append(range[0]).append("K - ").append(range[1]).append("K")
-                        .append("（约 ").append(range[0] / 10).append("万 - ")
-                        .append(range[1] / 10).append("万）\n")
+                        .append("（约 ").append(toWan(range[0])).append(" - ")
+                        .append(toWan(range[1])).append("）\n")
         );
         return sb.toString().trim();
     }
 
+    /**
+     * 千元转「万元」展示。用浮点计算避免整数除法丢精度（65K 曾显示成 6 万）。
+     */
+    static String toWan(int thousandYuan) {
+        double wan = thousandYuan / 10.0;
+        return wan == Math.floor(wan) ? (int) wan + "万" : String.format("%.1f万", wan);
+    }
 }
