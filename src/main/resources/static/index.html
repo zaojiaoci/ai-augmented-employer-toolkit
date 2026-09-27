@@ -409,6 +409,84 @@
             line-height: 1.7;
         }
 
+        /* ===== Task-level breakdown ===== */
+        .task-card {
+            background: #fff;
+            border-radius: 12px;
+            padding: 24px 28px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+            margin-bottom: 16px;
+        }
+
+        .task-card-title {
+            font-size: 15px;
+            font-weight: 700;
+            color: #1a1a2e;
+            margin-bottom: 4px;
+        }
+
+        .task-basis {
+            font-size: 13px;
+            line-height: 1.7;
+            color: #4b5563;
+            margin-bottom: 16px;
+        }
+
+        .task-columns {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 12px;
+        }
+
+        .task-col {
+            border-radius: 10px;
+            padding: 12px 14px;
+            border: 1px solid transparent;
+        }
+
+        .task-col.automatable { background: #fef2f2; border-color: #fecaca; }
+        .task-col.augmentable { background: #eff6ff; border-color: #bfdbfe; }
+        .task-col.human { background: #f0fdf4; border-color: #bbf7d0; }
+
+        .task-col-head {
+            font-size: 12px;
+            font-weight: 700;
+            margin-bottom: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 6px;
+        }
+
+        .task-col.automatable .task-col-head { color: #b91c1c; }
+        .task-col.augmentable .task-col-head { color: #1d4ed8; }
+        .task-col.human .task-col-head { color: #15803d; }
+
+        .task-count { font-size: 11px; font-weight: 600; opacity: 0.7; }
+
+        .task-col ul {
+            margin: 0;
+            padding-left: 1.15em;
+            font-size: 13px;
+            line-height: 1.65;
+            color: #374151;
+        }
+
+        .task-col li { margin-bottom: 4px; }
+        .task-empty { font-size: 12px; opacity: 0.6; }
+
+        .disclaimer {
+            margin-top: 14px;
+            font-size: 12px;
+            line-height: 1.7;
+            color: #92400e;
+            background: #fffbeb;
+            border: 1px solid #fde68a;
+            border-left: 3px solid #f59e0b;
+            border-radius: 8px;
+            padding: 10px 14px;
+        }
+
         /* ===== Chat / Follow-up conversation ===== */
         .chat-section {
             display: none;
@@ -575,6 +653,32 @@
             margin: 0 2px;
             vertical-align: baseline;
             cursor: default;
+        }
+
+        /* ===== Credibility-graded citations ===== */
+        .source-citation.cred-reported {
+            background: #ecfdf5;
+            border-color: #a7f3d0;
+            color: #047857;
+        }
+
+        .source-citation.cred-structural {
+            background: #eef2ff;
+            border-color: #c7d2fe;
+            color: #4f46e5;
+        }
+
+        .source-citation.cred-directional {
+            background: #fffbeb;
+            border-color: #fde68a;
+            color: #92400e;
+        }
+
+        .source-citation.cred-illustrative {
+            background: #f9fafb;
+            border-color: #d1d5db;
+            border-style: dashed;
+            color: #6b7280;
         }
 
         /* ===== Footer ===== */
@@ -829,7 +933,7 @@
                     <div class="gauge" id="gauge">
                         <div class="gauge-inner">
                             <span class="gauge-value" id="gaugeValue">--</span>
-                            <span class="gauge-label">自动化率</span>
+                            <span class="gauge-label">任务可自动化占比</span>
                         </div>
                     </div>
                     <span class="risk-tag" id="riskTag">评估中</span>
@@ -838,6 +942,26 @@
                     <div class="summary-label">分析摘要</div>
                     <div class="summary-text" id="summaryText"></div>
                 </div>
+            </div>
+
+            <div class="task-card" id="taskCard">
+                <div class="task-card-title">任务级拆解</div>
+                <div class="task-basis" id="ratioBasis"></div>
+                <div class="task-columns">
+                    <div class="task-col automatable">
+                        <div class="task-col-head">可自动化<span class="task-count" id="countAutomatable"></span></div>
+                        <ul id="listAutomatable"></ul>
+                    </div>
+                    <div class="task-col augmentable">
+                        <div class="task-col-head">AI 可增强<span class="task-count" id="countAugmentable"></span></div>
+                        <ul id="listAugmentable"></ul>
+                    </div>
+                    <div class="task-col human">
+                        <div class="task-col-head">需人工判断<span class="task-count" id="countHumanOnly"></span></div>
+                        <ul id="listHumanOnly"></ul>
+                    </div>
+                </div>
+                <div class="disclaimer" id="ratioDisclaimer"></div>
             </div>
 
             <div class="transition-card" id="transitionCard">
@@ -879,6 +1003,10 @@
 
         var sessionId = (crypto.randomUUID ? crypto.randomUUID() : 'sess-' + Date.now());
 
+        // 服务端在流式正文之后，用一个带该前缀的事件单独下发结构化结果，
+        // 这样打字机阶段只展示自然语言正文，不会把 JSON 源码滚给用户看。
+        var RESULT_MARKER = '[[RESULT]]';
+
         function toggleCaseBar() {
             document.getElementById('caseBar').classList.toggle('expanded');
         }
@@ -910,6 +1038,8 @@
             document.getElementById('streamingLabel').textContent = 'AI 正在分析中...';
 
             var fullText = '';
+            var resultPayload = '';
+            var inResult = false;
 
             try {
                 var res = await fetch('/api/analyze/stream?sessionId=' + encodeURIComponent(sessionId), {
@@ -935,7 +1065,19 @@
                     for (var i = 0; i < lines.length; i++) {
                         var line = lines[i];
                         if (line.startsWith('data:')) {
-                            fullText += line.substring(5);
+                            var chunk = line.substring(5);
+                            if (inResult) {
+                                // 结果事件可能因为长度被拆成多行，继续拼接
+                                resultPayload += chunk;
+                            } else {
+                                var at = chunk.indexOf(RESULT_MARKER);
+                                if (at >= 0) {
+                                    inResult = true;
+                                    resultPayload += chunk.substring(at + RESULT_MARKER.length);
+                                } else {
+                                    fullText += chunk;
+                                }
+                            }
                         } else if (i === lines.length - 1) {
                             buffer = line;
                         }
@@ -948,7 +1090,8 @@
                 streamingText.innerHTML = renderMarkdown(fullText);
                 document.getElementById('streamingLabel').textContent = '分析完成';
 
-                var data = tryParseJson(fullText);
+                // 优先使用服务端单独下发的结构化结果；模型未遵守约定时退化为解析整段文本
+                var data = resultPayload ? tryParseJson(resultPayload) : tryParseJson(fullText);
                 if (data && typeof data.automationRatio === 'number') {
                     streamingCard.classList.remove('visible');
                     showResult(data);
@@ -1062,6 +1205,8 @@
 
             document.getElementById('summaryText').textContent = data.summary;
 
+            renderTaskBreakdown(data.taskBreakdown, data.ratioBasis, data.ratioDisclaimer);
+
             var tp = data.transitionPath;
             if (tp) {
                 document.getElementById('suggestedRole').textContent = tp.suggestedRole || '待评估';
@@ -1085,6 +1230,50 @@
             resultArea.classList.add('visible');
         }
 
+        function renderTaskBreakdown(breakdown, basis, disclaimer) {
+            var card = document.getElementById('taskCard');
+            if (!breakdown) {
+                card.style.display = 'none';
+                return;
+            }
+            card.style.display = 'block';
+
+            document.getElementById('ratioBasis').textContent = basis || '';
+
+            fillTaskList('listAutomatable', 'countAutomatable', breakdown.automatable);
+            fillTaskList('listAugmentable', 'countAugmentable', breakdown.augmentable);
+            fillTaskList('listHumanOnly', 'countHumanOnly', breakdown.humanOnly);
+
+            var disclaimerBox = document.getElementById('ratioDisclaimer');
+            disclaimerBox.textContent = disclaimer || '该比率指「可自动化任务」占全部任务的比重，不等于人员缩减比例。';
+        }
+
+        function fillTaskList(listId, countId, items) {
+            var list = document.getElementById(listId);
+            var count = document.getElementById(countId);
+            list.innerHTML = '';
+
+            var values = (items || []).filter(function(item) {
+                return typeof item === 'string' && item.trim();
+            });
+
+            count.textContent = values.length ? values.length + ' 项' : '';
+
+            if (!values.length) {
+                var empty = document.createElement('li');
+                empty.className = 'task-empty';
+                empty.textContent = '未识别到该类任务';
+                list.appendChild(empty);
+                return;
+            }
+
+            values.forEach(function(item) {
+                var li = document.createElement('li');
+                li.textContent = item.trim();
+                list.appendChild(li);
+            });
+        }
+
         function tryParseJson(text) {
             try {
                 var cleaned = text.trim();
@@ -1104,11 +1293,29 @@
             return div.innerHTML;
         }
 
+        // 可信度等级 → 引用标签样式。启动时从 /api/knowledge/sources 拉取，
+        // 示意数据用虚线灰标，让读者一眼看出这不是事实。
+        var sourceCredibility = {};
+
+        async function loadSourceCredibility() {
+            try {
+                var res = await fetch('/api/knowledge/sources');
+                if (res.ok) sourceCredibility = await res.json();
+            } catch (e) {
+                /* 拉不到就退化为统一样式，不影响主流程 */
+            }
+        }
+
         function renderMarkdown(text) {
             // Step 1: Insert citation tags (before markdown parsing)
             var withCitations = text.replace(
                 /\(([a-zA-Z0-9\u4e00-\u9fff_-]+\.(md|pdf|txt|docx))\)/g,
-                '<span class="source-citation">$1</span>'
+                function(match, fileName) {
+                    var cred = sourceCredibility[fileName] || '';
+                    return '<span class="source-citation' + (cred ? ' cred-' + cred : '') + '"'
+                        + (cred ? ' title="知识库可信度：' + cred + '"' : '')
+                        + '>' + fileName + '</span>';
+                }
             );
             // Step 2: Render markdown to HTML
             if (typeof marked !== 'undefined') {
@@ -1129,6 +1336,8 @@
         document.getElementById('jobInput').addEventListener('keydown', function(e) {
             if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) analyze();
         });
+
+        loadSourceCredibility();
 
         document.getElementById('chatInput').addEventListener('keydown', function(e) {
             if (e.key === 'Enter' && !e.shiftKey) {
