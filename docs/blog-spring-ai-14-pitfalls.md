@@ -384,9 +384,3 @@ public Advisor create() {
 
 - GitHub：<https://github.com/zaojiaoci/ai-augmented-employer-toolkit>
 - Gitee：<https://gitee.com/woye/ai-augmented-employer-toolkit>
-
-
-如果你也在用 Spring AI 做东西，希望这 14 个坑能帮你省下几天。也欢迎来仓库提 issue——尤其是你踩到了我没踩到的坑。
-
-- GitHub：<https://github.com/zaojiaoci/ai-augmented-employer-toolkit>
-- Gitee：<https://gitee.com/woye/ai-augmented-employer-toolkit>
