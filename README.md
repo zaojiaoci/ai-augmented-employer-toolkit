@@ -1,6 +1,11 @@
 # ai-augmented-employer-toolkit
 
+> **当大多数 AI 工具在教企业如何裁人，这个工具想做的是：教企业如何「不裁人」。**
+
 用 AI 分析"企业引入 AI 后对现有岗位的影响"，目标是帮企业找到一条 **不裁员、转岗培训、人机协作** 的落地路径。
+
+> 想了解设计动机与工程取舍（而不仅是功能列表），见 [ARCHITECTURE.md](./ARCHITECTURE.md)；
+> 项目的定位与边界见 [POSITIONING.md](./POSITIONING.md)。
 
 ## 为什么做这个
 
