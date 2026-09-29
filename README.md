@@ -115,6 +115,20 @@ app.evaluation.enabled=true    额外开放评估接口
 `RetrievalRerankAdvisor` 只有在开关打开**且**容器中存在 `RerankModel` 时才启用，
 否则自动降级为普通向量检索并打 warn 日志——不会因为缺模型而启动失败。
 
+### 相关的独立项目：AgentLitmus · Memory Bench
+
+本项目在演进过程中沉淀出一套「智能体长期记忆自动化评测」能力，现已**独立为单独的开源项目**：
+
+> **AgentLitmus（智能体试金石）· Memory Bench**
+> 仓库：`github.com/agent-litmus/memory-bench`
+> 面向 openKylin 命题「智能体长期记忆自动化评测 Benchmark」，覆盖长期保持 / 记忆调用 / 动态更新 / 相近区分 / 边界识别 / 任务复用六个维度，
+> 基于运行证据自动评分，规则优先、无需 API Key、结果可复现。
+
+它的设计脉络与本项目一脉相承：**可信度分级管的是「数据该不该信」，长期记忆评测管的是「信息该不该留」**——同一治理哲学的两个切面。
+本项目的工程实践（可选能力降级、LLM-as-judge、双门控测试）为其提供了方法论基础。
+
+需要评测智能体记忆能力时，请使用该项目；本项目聚焦岗位影响分析与转岗路径。
+
 ### v0.2 UI 重设计
 
 - **紧凑案例横幅** — 格力案例从占满首屏的大横幅改为可折叠的紧凑条幅，点击展开详情
@@ -422,6 +436,20 @@ src/main/java/io/github/aiaugmentedemployertoolkit/
 │   ├── LlmUsageMetrics.java                      # token 用量统计
 │   ├── RateLimitExceededException.java           # 限流异常（映射 429）
 │   └── KnowledgeBaseService.java                 # 知识库加载（启动时自动运行）
+├── memorybench/
+│   ├── MemoryEntry.java                          # 长期记忆条目（可信度 + 保留策略）
+│   ├── LongTermMemory.java                       # 长期记忆接口
+│   ├── FileLongTermMemory.java                   # 文件持久化实现（JSON Lines）
+│   ├── Evidence.java                             # 统一证据（对话/记忆/轨迹/产物）
+│   ├── EvidenceCollector.java                    # 证据收集与导出
+│   ├── Dimension.java                            # 六个评测维度
+│   ├── MemoryCase.java                           # 评测用例模型
+│   ├── CaseJudge.java                            # 判定器（规则优先、LLM 兜底）
+│   ├── Answerer.java                             # 被测回答器抽象
+│   ├── RecallAnswerer.java                       # 确定性回答器（无 key 可跑）
+│   ├── MemoryBenchmarkRunner.java                # 评测执行器
+│   ├── BenchmarkReport.java                      # 多维指标报告
+│   └── MemoryCases.java                          # 内置用例集（12 条）
 └── tool/
     └── SalaryTool.java                           # 薪资查询工具（@Tool）
 
@@ -466,6 +494,8 @@ src/main/resources/
 | `RerankCapabilityIntegrationTest` | 真实上下文中 spring-ai-alibaba 的 rerank 自动配置确实生效 |
 | `AnalysisEvaluationLiveTest` | 评估基线（需 key + `RUN_LIVE_EVAL=true`，默认跳过） |
 | `FollowUpBehaviorLiveTest` | 行为验证：真实模型下的首轮结构化输出与追问回复（需 key，约 45 秒） |
+| `FileLongTermMemoryTest` | 长期记忆：写入、召回、更新取代、遗忘、跨实例持久化、会话隔离、中文切词 |
+| `MemoryBenchmarkRunnerTest` | 长期记忆评测链路：六维用例执行、失败识别、边界排除、证据导出、无模型降级 |
 | `InputValidatorTest` | 清洗、注入特征、**包装只含数据不含元说明**、提示词与分隔符的一致性契约 |
 
 ## 踩坑记录
@@ -650,6 +680,31 @@ javac 的注解处理轮次被中止，Lombok 没能生成代码。后面的报�
 
 **处理**：把它当成同口径下的**相对基线**——改动前后各跑一次对比均值。
 回归门槛设得很松（0.3），只用来发现明显劣化，不要调高到接近当前均值。
+
+## F. 序列化与存储
+
+### F1. Jackson 会把 record 的 isXxx() 当成属性序列化
+
+**现象**：长期记忆条目写入后读回为空，日志报 `Unrecognized field "active"`。
+
+**原因**：`MemoryEntry` 是 record，其中的 `isActive()` 被 Jackson 当作 boolean getter，
+序列化时写出 `active` 字段；但反序列化走的是 record 的规范构造器，没有 `active` 参数，
+于是整条解析失败被跳过——表现为「写入成功但读不出来」。
+
+**处理**：`isActive()` 加 `@JsonIgnore`；同时让 ObjectMapper 忽略未知字段，
+避免旧数据里的残留字段导致整条记忆丢失。
+
+**教训**：**record 里不要随手写 `isXxx()` 这类符合 getter 命名的方法**——它会凭空多出一个 JSON 属性，
+而 record 的构造器并不接受它。这个问题不会在编译期暴露，只会让数据在运行时静默丢失。
+
+### F2. 中文检索不能只按空格切词
+
+**现象**：查询「我上周去了杭州」匹配不到含「杭州」的记忆。
+
+**原因**：中文没有空格，整句被当成一个词，只有记忆内容与整句完全一致才会命中。
+
+**处理**：对含汉字的片段生成二字滑窗（bigram），保证短语级别可命中；
+纯英文 / 数字片段仍按整词处理，避免「ab」命中「abc」这类误匹配。
 
 ## 改动前的自查清单
 
