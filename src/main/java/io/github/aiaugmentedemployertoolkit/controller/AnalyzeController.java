@@ -5,19 +5,14 @@ import io.github.aiaugmentedemployertoolkit.dto.AnalyzeResponse;
 import io.github.aiaugmentedemployertoolkit.dto.EvaluateRequest;
 import io.github.aiaugmentedemployertoolkit.service.AnalysisEvaluator;
 import io.github.aiaugmentedemployertoolkit.service.AnalyzeService;
+import io.github.aiaugmentedemployertoolkit.service.ConversationMemory;
 import io.github.aiaugmentedemployertoolkit.service.KnowledgeBaseService;
 import io.github.aiaugmentedemployertoolkit.service.LlmUsageMetrics;
 import io.github.aiaugmentedemployertoolkit.service.RateLimitExceededException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
-import org.springframework.web.bind.annotation.ExceptionHandler;
-import org.springframework.web.bind.annotation.GetMapping;
-import org.springframework.web.bind.annotation.PostMapping;
-import org.springframework.web.bind.annotation.RequestBody;
-import org.springframework.web.bind.annotation.RequestMapping;
-import org.springframework.web.bind.annotation.RequestParam;
-import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.bind.annotation.*;
 import reactor.core.publisher.Flux;
 
 import java.time.Instant;
@@ -38,15 +33,30 @@ public class AnalyzeController {
     private final AnalysisEvaluator analysisEvaluator;
     private final KnowledgeBaseService knowledgeBase;
     private final LlmUsageMetrics metrics;
+    private final ConversationMemory conversationMemory;
 
     public AnalyzeController(AnalyzeService analyzeService,
                              AnalysisEvaluator analysisEvaluator,
                              KnowledgeBaseService knowledgeBase,
-                             LlmUsageMetrics metrics) {
+                             LlmUsageMetrics metrics,
+                             ConversationMemory conversationMemory) {
         this.analyzeService = analyzeService;
         this.analysisEvaluator = analysisEvaluator;
         this.knowledgeBase = knowledgeBase;
         this.metrics = metrics;
+        this.conversationMemory = conversationMemory;
+    }
+
+    /**
+     * 清空指定会话的对话上下文（保留长期记忆/知识库）。
+     * <p>
+     * 供外部评测工具调用，用于「跨会话」评测：注入事实 → 清空上下文 → 再提问，
+     * 以此区分「上下文窗口还记得」与「长期记忆真的记住了」。
+     */
+    @DeleteMapping("/memory/{sessionId}")
+    public ResponseEntity<Void> clearMemory(@PathVariable String sessionId) {
+        conversationMemory.clear(sessionId);
+        return ResponseEntity.noContent().build();
     }
 
     /**

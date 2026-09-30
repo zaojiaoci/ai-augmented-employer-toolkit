@@ -32,4 +32,13 @@ public interface ConversationMemory {
      * 当前存活的会话数量。
      */
     int sessionCount();
+
+    /**
+     * 清空指定会话的对话上下文。
+     * <p>
+     * 用于「跨会话评测」：注入事实后清空当前对话，只保留长期记忆（若有），
+     * 再提问——以此区分「上下文窗口还记得」与「长期记忆真的记住了」。
+     * 对纯内存实现而言，清空即等同于完全遗忘。
+     */
+    void clear(String sessionId);
 }

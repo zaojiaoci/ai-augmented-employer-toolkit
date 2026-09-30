@@ -114,6 +114,15 @@ public class InMemoryConversationMemory implements ConversationMemory {
     }
 
     @Override
+    public void clear(String sessionId) {
+        if (sessionId == null) {
+            return;
+        }
+        if (sessions.remove(sessionId) != null) {
+            log.debug("已清空会话上下文 session={}", sessionId);
+        }
+    }
+
     public int sessionCount() {
         return sessions.size();
     }
