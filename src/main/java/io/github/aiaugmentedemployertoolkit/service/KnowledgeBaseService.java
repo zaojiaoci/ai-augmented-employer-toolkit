@@ -51,6 +51,12 @@ public class KnowledgeBaseService implements ApplicationRunner {
     /** 入库文档的可信度登记表：文件名 → 等级 */
     private final Map<String, String> credibilityBySource = new LinkedHashMap<>();
 
+    /** 加载期收集到的 illustrative（示意、不可用于决策）片段原文，用于构建输出层硬护栏 */
+    private final List<String> illustrativeChunks = new ArrayList<>();
+
+    /** 输出层「示意数据硬护栏」，在 ingest 完成后构建；未加载完成前为 null */
+    private IllustrativeDataGuard guard;
+
     private final VectorStore vectorStore;
     private final String markdownPattern;
     private final String pdfPattern;
@@ -108,6 +114,20 @@ public class KnowledgeBaseService implements ApplicationRunner {
 
         log.info("知识库加载完成，Markdown 文档 {} 块，PDF 文档 {} 块，共登记 {} 个来源",
                 mdCount, pdfCount, credibilityBySource.size());
+
+        if (!illustrativeChunks.isEmpty()) {
+            this.guard = new IllustrativeDataGuard(illustrativeChunks);
+            log.info("已构建输出层示意数据护栏，扫描 {} 个 illustrative 片段", illustrativeChunks.size());
+        } else {
+            log.info("未发现 illustrative 文档，输出层示意数据护栏为空（不拦截）");
+        }
+    }
+
+    /**
+     * 输出层「示意数据硬护栏」。可能为 null（加载尚未完成，或启动期未成功加载）。
+     */
+    public IllustrativeDataGuard getGuard() {
+        return guard;
     }
 
     /**
@@ -178,6 +198,11 @@ public class KnowledgeBaseService implements ApplicationRunner {
                 metadata.put("source", fileName);
                 metadata.put("credibility", credibility);
                 allChunks.add(new Document(chunk.getText(), metadata));
+
+                // illustrative 片段收集起来，供输出层硬护栏构建禁用数值集合
+                if ("illustrative".equals(credibility)) {
+                    illustrativeChunks.add(chunk.getText());
+                }
             }
 
             log.info("已解析 {}（{} 块，可信度={}）", fileName, chunks.size(), credibility);

@@ -66,19 +66,24 @@ class AnalysisEvaluationLiveTest {
 
             // 评委看到的是「完整分析结论」而不是仅摘要，否则可比对的信息太少
             String answer = renderAnswer(response);
-            AnalysisEvaluator.Result result = analysisEvaluator.evaluate(evalCase.jobDescription(), docs, answer);
+            String transition = renderTransition(response.getTransitionPath());
+            AnalysisEvaluator.Result result =
+                    analysisEvaluator.evaluate(evalCase.jobDescription(), docs, answer, transition);
             rows.add(new Row(evalCase.id(), evalCase.industry(), result));
         }
 
         log.info("========== 评估基线 ==========");
-        rows.forEach(row -> log.info("{} [{}] 相关性={} 忠实度={}",
-                row.id(), row.industry(), row.result().relevancyScore(), row.result().faithfulnessScore()));
+        rows.forEach(row -> log.info("{} [{}] 相关性={} 忠实度={} 转岗质量={}",
+                row.id(), row.industry(), row.result().relevancyScore(),
+                row.result().faithfulnessScore(), row.result().transitionQualityScore()));
 
         double avgRelevancy = rows.stream().mapToDouble(r -> r.result().relevancyScore()).average().orElse(0);
         double avgFaithfulness = rows.stream().mapToDouble(r -> r.result().faithfulnessScore()).average().orElse(0);
+        double avgTransition = rows.stream().mapToDouble(r -> r.result().transitionQualityScore()).average().orElse(0);
         long passed = rows.stream().filter(r -> r.result().pass()).count();
 
-        log.info("平均相关性={} 平均忠实度={} 通过 {}/{}", avgRelevancy, avgFaithfulness, passed, rows.size());
+        log.info("平均相关性={} 平均忠实度={} 平均转岗质量={} 通过 {}/{}",
+                avgRelevancy, avgFaithfulness, avgTransition, passed, rows.size());
         log.info("==============================");
 
         assertTrue(rows.stream().allMatch(r -> r.result().relevancyScore() >= 0),
@@ -86,6 +91,7 @@ class AnalysisEvaluationLiveTest {
         // 宽松的回归门槛：这套分数是「相对基线」而非绝对质量分（我们没有标注过的标准答案），
         // 门槛只用来发现明显劣化，不要调高到接近当前均值。
         assertTrue(avgRelevancy >= 0.3, "平均相关性过低，提示词或模型可能出问题：" + avgRelevancy);
+        assertTrue(avgTransition >= 0.2, "平均转岗建议质量过低，转岗路径可能退化：" + avgTransition);
     }
 
     private static String renderAnswer(AnalyzeResponse response) {
@@ -98,6 +104,23 @@ class AnalysisEvaluationLiveTest {
         }
         if (response.getTransitionPath() != null) {
             sb.append("\n建议转岗方向：").append(response.getTransitionPath().getSuggestedRole());
+        }
+        return sb.toString();
+    }
+
+    private static String renderTransition(io.github.aiaugmentedemployertoolkit.dto.TransitionPath path) {
+        if (path == null) {
+            return "";
+        }
+        StringBuilder sb = new StringBuilder();
+        if (path.getSuggestedRole() != null) {
+            sb.append("建议转岗方向：").append(path.getSuggestedRole()).append("\n");
+        }
+        if (path.getSkillGap() != null) {
+            sb.append("能力缺口：").append(path.getSkillGap()).append("\n");
+        }
+        if (path.getEncouragement() != null) {
+            sb.append("鼓励语：").append(path.getEncouragement());
         }
         return sb.toString();
     }

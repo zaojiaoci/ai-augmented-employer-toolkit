@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.github.aiaugmentedemployertoolkit.config.SystemPrompt;
 import io.github.aiaugmentedemployertoolkit.dto.AnalyzeResponse;
+import io.github.aiaugmentedemployertoolkit.dto.DataGuard;
 import io.github.aiaugmentedemployertoolkit.dto.TaskBreakdown;
 import io.github.aiaugmentedemployertoolkit.dto.TransitionPath;
 import org.slf4j.Logger;
@@ -55,9 +56,11 @@ public class AnalyzeService {
     private final InputValidator validator;
     private final TokenBucketRateLimiter rateLimiter;
     private final LlmUsageMetrics metrics;
+    private final KnowledgeBaseService knowledgeBase;
     private final ObjectMapper objectMapper;
     private final BeanOutputConverter<AnalyzeResponse> outputConverter;
     private final String baseSystemPrompt;
+    private final StanceGuard stanceGuard = new StanceGuard();
 
     private final long timeoutSeconds;
     private final long streamTimeoutSeconds;
@@ -69,6 +72,7 @@ public class AnalyzeService {
                           InputValidator validator,
                           TokenBucketRateLimiter rateLimiter,
                           LlmUsageMetrics metrics,
+                          KnowledgeBaseService knowledgeBase,
                           @Value("${app.analysis.timeout-seconds:120}") long timeoutSeconds,
                           @Value("${app.analysis.stream-timeout-seconds:180}") long streamTimeoutSeconds,
                           @Value("${app.analysis.max-retries:2}") int maxRetries) {
@@ -78,6 +82,7 @@ public class AnalyzeService {
         this.validator = validator;
         this.rateLimiter = rateLimiter;
         this.metrics = metrics;
+        this.knowledgeBase = knowledgeBase;
         this.objectMapper = new ObjectMapper();
         this.outputConverter = new BeanOutputConverter<>(AnalyzeResponse.class);
         this.timeoutSeconds = Math.max(1, timeoutSeconds);
@@ -95,13 +100,15 @@ public class AnalyzeService {
         }
 
         try {
-            return Mono.fromCallable(() -> callOnce(input))
+            AnalyzeResponse response = Mono.fromCallable(() -> callOnce(input))
                     .subscribeOn(Schedulers.boundedElastic())
                     .timeout(Duration.ofSeconds(timeoutSeconds))
                     .retryWhen(Retry.backoff(maxRetries, Duration.ofMillis(400))
                             .maxBackoff(Duration.ofSeconds(4))
                             .filter(e -> !(e instanceof IllegalArgumentException)))
                     .block();
+            applyGuard(response);
+            return response;
         } catch (RuntimeException e) {
             metrics.recordError(SYNC_LABEL);
             throw new IllegalStateException("AI 分析失败：" + rootMessage(e), e);
@@ -147,14 +154,36 @@ public class AnalyzeService {
                 .map(AnalyzeService::textOf)
                 .filter(text -> !text.isEmpty())
                 .map(splitter::accept)
+                .map(this::guardVisiblePiece)
                 .filter(piece -> !piece.isEmpty());
 
         Flux<String> tail = Flux.defer(() -> {
             metrics.record(STREAM_LABEL, lastResponseWithUsage.get());
-            String rest = splitter.drainVisible();
-            memory.append(sessionId, input, splitter.getVisibleText());
+            String visibleText = splitter.getVisibleText();
+            memory.append(sessionId, input, visibleText);
 
-            String json = compactJson(extractJson(splitter.drainResult()));
+            // 立场护栏：对整段可见正文做一次检测，命中即告警（正文已流式下发，无法回改，仅告警）
+            if (stanceGuard.detectsReplacementFraming(visibleText)) {
+                log.warn("立场护栏触发（流式正文）：输出出现替代/裁员式表述 {}",
+                        stanceGuard.matchedPhrases(visibleText));
+            }
+
+            String rest = guardText(splitter.drainVisible());
+
+            String rawResult = splitter.drainResult();
+            String json = compactJson(extractJson(rawResult));
+            AnalyzeResponse resultResponse = null;
+            if (!json.isEmpty()) {
+                resultResponse = parseResponse(rawResult);
+                if (resultResponse != null) {
+                    applyGuard(resultResponse);
+                    try {
+                        json = compactJson(objectMapper.writeValueAsString(resultResponse));
+                    } catch (Exception e) {
+                        log.warn("转岗结果序列化失败，回退为原始 JSON：{}", e.getMessage());
+                    }
+                }
+            }
             if (json.isEmpty()) {
                 log.warn("流式输出未包含结构化结果（模型未遵守分隔标记），本次只返回正文");
                 return rest.isEmpty() ? Flux.<String>empty() : Flux.just(rest);
@@ -234,7 +263,8 @@ public class AnalyzeService {
                     parseTaskBreakdown(node.path("taskBreakdown")),
                     node.path("ratioBasis").asText(""),
                     node.path("ratioDisclaimer").asText(DEFAULT_DISCLAIMER),
-                    parseTransitionPath(node.path("transitionPath")));
+                    parseTransitionPath(node.path("transitionPath")),
+                    null);
         } catch (Exception e) {
             log.warn("解析 LLM 返回 JSON 失败，使用原始文本作为 summary: {}", e.getMessage());
             return new AnalyzeResponse(
@@ -247,7 +277,8 @@ public class AnalyzeService {
                             List.of("请重新分析以获取转岗建议"),
                             "待评估",
                             "待评估",
-                            "每个岗位都有可迁移的核心价值，转岗不是从零开始。"));
+                            "每个岗位都有可迁移的核心价值，转岗不是从零开始。"),
+                    null);
         }
     }
 
@@ -324,6 +355,90 @@ public class AnalyzeService {
             log.debug("JSON 无法规范化，退化为删除换行: {}", e.getMessage());
             return json.replace("\r", "").replace("\n", " ");
         }
+    }
+
+    /**
+     * 对单行流式可见片段做示意数据脱敏（不影响打字机效果，仅替换命中的数值片段）。
+     */
+    private String guardVisiblePiece(String piece) {
+        return guardText(piece);
+    }
+
+    /**
+     * 示意数据硬护栏：对一段文本脱敏。无护栏（知识库尚未加载/无 illustrative 文档）时原样返回。
+     */
+    private String guardText(String text) {
+        IllustrativeDataGuard guard = knowledgeBase == null ? null : knowledgeBase.getGuard();
+        if (guard == null || text == null) {
+            return text == null ? "" : text;
+        }
+        return guard.check(text).sanitized();
+    }
+
+    /**
+     * 对解析后的结构化结果施加两道输出层护栏，并写入 {@link DataGuard} 检测结果：
+     * 1. 示意数据硬护栏——脱敏 summary / skillGap / encouragement 中的 illustrative 数值；
+     * 2. 立场护栏——检测转岗建议是否出现「被替代 / 裁员」式立场失当表述。
+     */
+    void applyGuard(AnalyzeResponse response) {
+        if (response == null) {
+            return;
+        }
+        IllustrativeDataGuard ig = knowledgeBase == null ? null : knowledgeBase.getGuard();
+        boolean leak = false;
+        List<String> leaked = new ArrayList<>();
+
+        if (ig != null) {
+            if (response.getSummary() != null) {
+                IllustrativeDataGuard.Result r = ig.check(response.getSummary());
+                if (r.leakDetected()) {
+                    leak = true;
+                    leaked.addAll(r.leakedFragments());
+                    response.setSummary(r.sanitized());
+                }
+            }
+            TransitionPath tp = response.getTransitionPath();
+            if (tp != null) {
+                if (tp.getSkillGap() != null) {
+                    IllustrativeDataGuard.Result r = ig.check(tp.getSkillGap());
+                    if (r.leakDetected()) {
+                        leak = true;
+                        leaked.addAll(r.leakedFragments());
+                        tp.setSkillGap(r.sanitized());
+                    }
+                }
+                if (tp.getEncouragement() != null) {
+                    IllustrativeDataGuard.Result r = ig.check(tp.getEncouragement());
+                    if (r.leakDetected()) {
+                        leak = true;
+                        leaked.addAll(r.leakedFragments());
+                        tp.setEncouragement(r.sanitized());
+                    }
+                }
+                // suggestedRole / transferableSkills 是岗位名称或能力名，不含示意数值，跳过
+            }
+        }
+
+        StringBuilder stanceText = new StringBuilder();
+        if (response.getSummary() != null) {
+            stanceText.append(response.getSummary()).append("\n");
+        }
+        TransitionPath tp = response.getTransitionPath();
+        if (tp != null) {
+            if (tp.getSuggestedRole() != null) stanceText.append(tp.getSuggestedRole()).append("\n");
+            if (tp.getSkillGap() != null) stanceText.append(tp.getSkillGap()).append("\n");
+            if (tp.getEncouragement() != null) stanceText.append(tp.getEncouragement());
+        }
+        List<String> stance = stanceGuard.matchedPhrases(stanceText.toString());
+        boolean stanceHit = !stance.isEmpty();
+        if (stanceHit) {
+            log.warn("立场护栏触发：转岗建议出现替代/裁员式表述 {}", stance);
+        }
+        if (leak) {
+            log.warn("示意数据硬护栏触发：输出泄露 illustrative 数值 {}，已脱敏", leaked);
+        }
+
+        response.setDataGuard(new DataGuard(leak, leaked, stanceHit, stance));
     }
 
     static String textOf(ChatResponse response) {

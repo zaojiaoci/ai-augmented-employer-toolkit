@@ -5,6 +5,7 @@ import io.github.aiaugmentedemployertoolkit.dto.TaskBreakdown;
 import io.github.aiaugmentedemployertoolkit.dto.TransitionPath;
 import io.github.aiaugmentedemployertoolkit.service.AnalysisEvaluator;
 import io.github.aiaugmentedemployertoolkit.service.AnalyzeService;
+import io.github.aiaugmentedemployertoolkit.service.ConversationMemory;
 import io.github.aiaugmentedemployertoolkit.service.KnowledgeBaseService;
 import io.github.aiaugmentedemployertoolkit.service.LlmUsageMetrics;
 import io.github.aiaugmentedemployertoolkit.service.RateLimitExceededException;
@@ -37,13 +38,14 @@ class AnalyzeControllerTest {
     private final LlmUsageMetrics metrics = new LlmUsageMetrics();
 
     private final KnowledgeBaseService knowledgeBase = mock(KnowledgeBaseService.class);
+    private final ConversationMemory conversationMemory = mock(ConversationMemory.class);
 
     private MockMvc mockMvc;
 
     @BeforeEach
     void setUp() {
         mockMvc = MockMvcBuilders
-                .standaloneSetup(new AnalyzeController(analyzeService, analysisEvaluator, knowledgeBase, metrics))
+                .standaloneSetup(new AnalyzeController(analyzeService, analysisEvaluator, knowledgeBase, metrics, conversationMemory))
                 .build();
     }
 
@@ -149,8 +151,8 @@ class AnalyzeControllerTest {
     @Test
     void evaluatesProvidedAnswer() throws Exception {
         when(analysisEvaluator.isEnabled()).thenReturn(true);
-        when(analysisEvaluator.evaluateWithTexts(eq("订单录入"), eq(List.of("上下文")), eq("分析内容")))
-                .thenReturn(new AnalysisEvaluator.Result(0.9f, "相关", 0.8f, "忠实"));
+        when(analysisEvaluator.evaluateWithTexts(eq("订单录入"), eq(List.of("上下文")), eq("分析内容"), any()))
+                .thenReturn(new AnalysisEvaluator.Result(0.9f, "相关", 0.8f, "忠实", 0.5f, "转岗建议未评估"));
 
         mockMvc.perform(post("/api/evaluate")
                         .contentType(MediaType.APPLICATION_JSON)
@@ -166,8 +168,8 @@ class AnalyzeControllerTest {
         when(analysisEvaluator.isEnabled()).thenReturn(true);
         when(analyzeService.analyze("订单录入")).thenReturn(sampleResponse());
         // documents 省略时为 null，anyList() 不匹配 null
-        when(analysisEvaluator.evaluateWithTexts(eq("订单录入"), any(), eq("摘要")))
-                .thenReturn(new AnalysisEvaluator.Result(0.7f, "ok", 0.6f, "ok"));
+        when(analysisEvaluator.evaluateWithTexts(eq("订单录入"), any(), eq("摘要"), any()))
+                .thenReturn(new AnalysisEvaluator.Result(0.7f, "ok", 0.6f, "ok", 0.5f, "转岗建议未评估"));
 
         mockMvc.perform(post("/api/evaluate")
                         .contentType(MediaType.APPLICATION_JSON)
@@ -205,6 +207,7 @@ class AnalyzeControllerTest {
                 new TaskBreakdown(List.of("订单录入"), List.of("数据核对"), List.of("客户沟通")),
                 "5 项任务中 3 项可自动化",
                 "这是任务占比，不是裁员比例",
-                new TransitionPath(List.of("客户沟通"), "客户关系管理专员", "需要学习 CRM", "你不是从零开始"));
+                new TransitionPath(List.of("客户沟通"), "客户关系管理专员", "需要学习 CRM", "你不是从零开始"),
+                null);
     }
 }

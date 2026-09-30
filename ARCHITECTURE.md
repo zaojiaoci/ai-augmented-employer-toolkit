@@ -138,16 +138,20 @@ LLM 应用最大的隐性成本是：**改一次提示词，不知道变好还�
 ```java
 EvaluationResponse relevancy   = new AnswerRelevancyEvaluator(builder).evaluate(request);
 EvaluationResponse faithfulness = new AnswerFaithfulnessEvaluator(builder).evaluate(request);
+TransitionQualityJudge.Result transition = transitionJudge.judge(jobDescription, transitionText, answer);
 ```
 
 机制：把「检索到的知识库上下文」当作 ground truth，「模型产出的分析」当作 student answer，
-让另一个 LLM 按 rubric 打分，得到**相关性**与**忠实度**两个 0~1 分数。
+让另一个 LLM 按 rubric 打分，得到**相关性**与**忠实度**两个 0~1 分数；
+再用 `TransitionQualityJudge` 单独对 `transitionPath`（转岗建议）做第三维评测——
+评建议岗位是否与可迁移技能一致、能力缺口是否具体、措辞是否为「升级式」而非「重来式」。
 
-两个关键工程取舍：
+三个关键工程取舍：
 
-1. **默认关闭**（`app.evaluation.enabled=false`）。每次评估额外发起两次 LLM 调用，
-   属于开发 / CI 阶段能力，**绝不**发生在用户请求链路上——否则成本和延迟爆炸。
+1. **默认关闭**（`app.evaluation.enabled=false`）。每次评估额外发起三次 LLM 调用
+   （相关性、忠实度、转岗质量），属于开发 / CI 阶段能力，**绝不**发生在用户请求链路上——否则成本和延迟爆炸。
 2. **22 条 eval-case 基线**，改动前后各跑一次对比均值，而非追求某个绝对分数。
+3. 转岗质量维度是本评测里最该被量化、也最该守住的一环：它直接对应项目的「增强而非替代」价值观。
 
 ### 最容易误导人的认知（写在文档里以防误读）
 
@@ -173,14 +177,26 @@ EvaluationResponse faithfulness = new AnswerFaithfulnessEvaluator(builder).evalu
 
 ```
         事前                  事中                  事后
-   ┌─────────────┐      ┌──────────────┐      ┌──────────────┐
-   │ 可信度分级   │ ───▶ │ rerank 降级   │ ───▶ │ LLM-as-judge │
-   │ (打标签)     │      │ (检索可降级)  │      │ (量化回归)    │
-   └─────────────┘      └──────────────┘      └──────────────┘
+   ┌─────────────┐      ┌──────────────┐      ┌─────────────────────┐
+   │ 可信度分级   │ ───▶ │ rerank 降级   │ ───▶ │ LLM-as-judge        │
+   │ (打标签)     │      │ (检索可降级)  │      │ (量化回归)            │
+   └─────────────┘      └──────────────┘      └─────────────────────┘
    不让假数据进系统      缺能力不绑架主链路      改动可衡量、可防劣化
+                                                  │
+                                                  ▼
+                                         ┌─────────────────────┐
+                                         │ 输出层硬护栏          │
+                                         │ (脱敏示意数据+立场)   │
+                                         └─────────────────────┘
+                                           软约束的最后一道兜底
 ```
 
-三者共同把"模型的不确定性"收敛进"系统的确定性"：
+可信度分级是**软约束**（靠提示词请求模型自觉）。因此在这条链路的末端再补一道**输出层硬护栏**（`IllustrativeDataGuard` + `StanceGuard`）：
+知识库加载时自动提取 `illustrative` 片段里的具体数值，模型产出后做确定性扫描，命中即脱敏并告警；
+同时检测「被替代 / 裁员」式立场失当表述。它把"假数据不出""增强而非替代"从"靠模型自觉"升级为"系统兜底"，
+结果写入响应的 `dataGuard` 字段，可追溯、可拦截。
+
+这几道机制共同把"模型的不确定性"收敛进"系统的确定性"：
 
 - **可信度分级**确保喂进去的数据有出处；
 - **rerank 降级**确保检索增强可选、主链路永远能跑；

@@ -1,5 +1,6 @@
 package io.github.aiaugmentedemployertoolkit.dto;
 
+import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.annotation.JsonPropertyDescription;
 import lombok.AllArgsConstructor;
 import lombok.Data;
@@ -27,5 +28,9 @@ public class AnalyzeResponse {
 
     @JsonPropertyDescription("转岗路径建议，包含可迁移技能、目标岗位、技能差距和鼓励语")
     private TransitionPath transitionPath;
+
+    @JsonProperty(access = JsonProperty.Access.WRITE_ONLY)
+    @JsonPropertyDescription("服务端对输出施加的数据可信度与立场护栏检测结果；模型不会产出此字段，由服务在解析后注入")
+    private DataGuard dataGuard;
 
 }

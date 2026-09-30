@@ -3,6 +3,7 @@ package io.github.aiaugmentedemployertoolkit.controller;
 import io.github.aiaugmentedemployertoolkit.dto.AnalyzeRequest;
 import io.github.aiaugmentedemployertoolkit.dto.AnalyzeResponse;
 import io.github.aiaugmentedemployertoolkit.dto.EvaluateRequest;
+import io.github.aiaugmentedemployertoolkit.dto.TransitionPath;
 import io.github.aiaugmentedemployertoolkit.service.AnalysisEvaluator;
 import io.github.aiaugmentedemployertoolkit.service.AnalyzeService;
 import io.github.aiaugmentedemployertoolkit.service.ConversationMemory;
@@ -112,10 +113,16 @@ public class AnalyzeController {
         }
 
         String answer = request.getAnswer();
+        AnalyzeResponse analyzed = null;
         if (answer == null || answer.isBlank()) {
-            answer = analyzeService.analyze(jobDescription).getSummary();
+            analyzed = analyzeService.analyze(jobDescription);
+            answer = analyzed.getSummary();
         }
-        return ResponseEntity.ok(analysisEvaluator.evaluateWithTexts(jobDescription, request.getDocuments(), answer));
+        String transition = request.getTransitionContext();
+        if ((transition == null || transition.isBlank()) && analyzed != null) {
+            transition = renderTransition(analyzed.getTransitionPath());
+        }
+        return ResponseEntity.ok(analysisEvaluator.evaluateWithTexts(jobDescription, request.getDocuments(), answer, transition));
     }
 
     @ExceptionHandler(IllegalArgumentException.class)
@@ -135,6 +142,26 @@ public class AnalyzeController {
 
     private static String jobDescriptionOf(AnalyzeRequest request) {
         return request == null ? null : request.getJobDescription();
+    }
+
+    /**
+     * 把转岗路径拼成评委可读的文本（建议岗位 + 能力缺口 + 鼓励语）。
+     */
+    private static String renderTransition(TransitionPath path) {
+        if (path == null) {
+            return "";
+        }
+        StringBuilder sb = new StringBuilder();
+        if (path.getSuggestedRole() != null) {
+            sb.append("建议转岗方向：").append(path.getSuggestedRole()).append("\n");
+        }
+        if (path.getSkillGap() != null) {
+            sb.append("能力缺口：").append(path.getSkillGap()).append("\n");
+        }
+        if (path.getEncouragement() != null) {
+            sb.append("鼓励语：").append(path.getEncouragement());
+        }
+        return sb.toString();
     }
 
     private static ResponseEntity<Map<String, Object>> error(HttpStatus status, String message) {

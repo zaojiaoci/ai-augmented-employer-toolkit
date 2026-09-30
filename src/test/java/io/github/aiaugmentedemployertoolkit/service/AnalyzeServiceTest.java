@@ -2,6 +2,8 @@ package io.github.aiaugmentedemployertoolkit.service;
 
 import io.github.aiaugmentedemployertoolkit.config.SystemPrompt;
 import io.github.aiaugmentedemployertoolkit.dto.AnalyzeResponse;
+import io.github.aiaugmentedemployertoolkit.service.IllustrativeDataGuard;
+import io.github.aiaugmentedemployertoolkit.service.KnowledgeBaseService;
 import org.junit.jupiter.api.Test;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.messages.AssistantMessage;
@@ -21,9 +23,12 @@ import java.util.ArrayList;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 class AnalyzeServiceTest {
 
@@ -209,7 +214,8 @@ class AnalyzeServiceTest {
                 new InputValidator(2000),
                 new TokenBucketRateLimiter(1, 0.1, 100),
                 new InMemoryConversationMemory(16, Duration.ofMinutes(60), 100),
-                new LlmUsageMetrics());
+                new LlmUsageMetrics(),
+                mock(KnowledgeBaseService.class));
 
         assertNotNull(service.analyzeStream("s1", "第一次").collectList().block());
         assertThrows(RateLimitExceededException.class,
@@ -223,7 +229,8 @@ class AnalyzeServiceTest {
                 new InputValidator(2000),
                 new TokenBucketRateLimiter(100, 100, 100),
                 new InMemoryConversationMemory(16, Duration.ofMinutes(60), 100),
-                metrics);
+                metrics,
+                mock(KnowledgeBaseService.class));
 
         service.analyzeStream("s1", "订单录入").collectList().block();
 
@@ -273,7 +280,8 @@ class AnalyzeServiceTest {
                 new InputValidator(2000),
                 new TokenBucketRateLimiter(100, 100, 100),
                 new InMemoryConversationMemory(16, Duration.ofMinutes(60), 100),
-                new LlmUsageMetrics());
+                new LlmUsageMetrics(),
+                mock(KnowledgeBaseService.class));
     }
 
     private AnalyzeService serviceWith(String syncText,
@@ -281,7 +289,8 @@ class AnalyzeServiceTest {
                                        InputValidator validator,
                                        TokenBucketRateLimiter limiter,
                                        ConversationMemory memory,
-                                       LlmUsageMetrics metrics) {
+                                       LlmUsageMetrics metrics,
+                                       KnowledgeBaseService knowledgeBase) {
         ChatModel model = new FakeChatModel(syncText, streamTokens);
         return new AnalyzeService(ChatClient.builder(model).build(),
                 new SystemPrompt(BASE_PROMPT),
@@ -289,9 +298,86 @@ class AnalyzeServiceTest {
                 validator,
                 limiter,
                 metrics,
+                knowledgeBase,
                 10,
                 10,
                 0);
+    }
+
+    /**
+     * 兼容旧测试用例的 6 参重载：默认注入一个不携带护栏的 KnowledgeBaseService（不触发硬拦截）。
+     */
+    private AnalyzeService serviceWith(String syncText,
+                                       List<String> streamTokens,
+                                       InputValidator validator,
+                                       TokenBucketRateLimiter limiter,
+                                       ConversationMemory memory,
+                                       LlmUsageMetrics metrics) {
+        return serviceWith(syncText, streamTokens, validator, limiter, memory, metrics, mock(KnowledgeBaseService.class));
+    }
+
+    // ---------- 输出层护栏 ----------
+
+    @Test
+    void redactsLeakedIllustrativeNumbersFromSummary() {
+        // 模拟知识库里 illustrative 片段含「成功率 100%」「+42%~+88%」这类示意数值
+        KnowledgeBaseService kb = mock(KnowledgeBaseService.class);
+        when(kb.getGuard()).thenReturn(
+                new IllustrativeDataGuard(List.of("成功率 100%", "+42%~+88%")));
+
+        String leakedJson = "{\"automationRatio\":0.6,\"summary\":\"据示意案例，转岗成功率 100%，薪资 +42%~+88%。\","
+                + "\"taskBreakdown\":{\"automatable\":[\"订单录入\"],\"augmentable\":[\"数据核对\"],"
+                + "\"humanOnly\":[\"客户沟通\"]},"
+                + "\"ratioBasis\":\"5 项任务中 3 项可自动化\","
+                + "\"ratioDisclaimer\":\"这是任务占比，不是裁员比例\","
+                + "\"transitionPath\":{\"transferableSkills\":[\"客户沟通\"],"
+                + "\"suggestedRole\":\"客户关系管理专员\","
+                + "\"skillGap\":\"需要学习 CRM 系统\","
+                + "\"encouragement\":\"你不是从零开始\"}}";
+
+        AnalyzeService service = serviceWith(leakedJson, List.of(),
+                new InputValidator(2000),
+                new TokenBucketRateLimiter(100, 100, 100),
+                new InMemoryConversationMemory(16, Duration.ofMinutes(60), 100),
+                new LlmUsageMetrics(),
+                kb);
+
+        AnalyzeResponse response = service.analyze("订单录入");
+
+        assertTrue(response.getDataGuard() != null && response.getDataGuard().isIllustrativeLeakDetected(),
+                "应检测到示意数据泄露");
+        assertTrue(response.getSummary().contains(IllustrativeDataGuard.REDACTED),
+                "泄露的示意数值应被脱敏");
+        assertFalse(response.getSummary().contains("100%"), "原文里的 100% 不应再出现");
+    }
+
+    @Test
+    void flagsReplacementFramingInTransitionPath() {
+        KnowledgeBaseService kb = mock(KnowledgeBaseService.class);
+        when(kb.getGuard()).thenReturn(null); // 无 illustrative 护栏，仅验证立场护栏
+
+        String framingJson = "{\"automationRatio\":0.9,\"summary\":\"该岗位可被完全自动化。\","
+                + "\"taskBreakdown\":{\"automatable\":[\"订单录入\"],\"augmentable\":[\"数据核对\"],"
+                + "\"humanOnly\":[\"客户沟通\"]},"
+                + "\"ratioBasis\":\"5 项任务中 4 项可自动化\","
+                + "\"ratioDisclaimer\":\"这是任务占比，不是裁员比例\","
+                + "\"transitionPath\":{\"transferableSkills\":[\"客户沟通\"],"
+                + "\"suggestedRole\":\"待评估\","
+                + "\"skillGap\":\"你已被AI替代，无需转岗\","
+                + "\"encouragement\":\"很遗憾\"}}";
+
+        AnalyzeService service = serviceWith(framingJson, List.of(),
+                new InputValidator(2000),
+                new TokenBucketRateLimiter(100, 100, 100),
+                new InMemoryConversationMemory(16, Duration.ofMinutes(60), 100),
+                new LlmUsageMetrics(),
+                kb);
+
+        AnalyzeResponse response = service.analyze("订单录入");
+
+        assertTrue(response.getDataGuard() != null && response.getDataGuard().isReplacementFramingDetected(),
+                "应检测到立场失当表述");
+        assertFalse(response.getDataGuard().isIllustrativeLeakDetected(), "本例不应有示意数据泄露");
     }
 
     private String systemTextOf(int index) {
